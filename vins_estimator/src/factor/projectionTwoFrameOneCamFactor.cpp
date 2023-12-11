@@ -83,15 +83,15 @@ bool ProjectionTwoFrameOneCamFactor::Evaluate(double const *const *parameters, d
     pts_i_td = pts_i - (td - td_i) * velocity_i;
     pts_j_td = pts_j - (td - td_j) * velocity_j;
     // 转到相机系
-    Eigen::Vector3d pts_camera_i = pts_i_td / inv_dep_i;
+    Eigen::Vector3d pts_camera_i = pts_i_td / inv_dep_i; // t_ci_p
     // 转到IMU系
-    Eigen::Vector3d pts_imu_i = qic * pts_camera_i + tic;
+    Eigen::Vector3d pts_imu_i = qic * pts_camera_i + tic; // t_i_p
     // 转到世界系
-    Eigen::Vector3d pts_w = Qi * pts_imu_i + Pi;
+    Eigen::Vector3d pts_w = Qi * pts_imu_i + Pi; // t_w_p
     // 转到j的IMU系
-    Eigen::Vector3d pts_imu_j = Qj.inverse() * (pts_w - Pj);
+    Eigen::Vector3d pts_imu_j = Qj.inverse() * (pts_w - Pj); // t_ji_p
     // 转到j的相机系
-    Eigen::Vector3d pts_camera_j = qic.inverse() * (pts_imu_j - tic);
+    Eigen::Vector3d pts_camera_j = qic.inverse() * (pts_imu_j - tic); // t_jc_p
     Eigen::Map<Eigen::Vector2d> residual(residuals);
 
 #ifdef UNIT_SPHERE_ERROR 

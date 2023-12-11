@@ -9,6 +9,7 @@
 
 #include "estimator.h"
 #include "../utility/visualization.h"
+#include "common.hpp"
 
 Estimator::Estimator(): f_manager{Rs}
 {
@@ -198,9 +199,23 @@ void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1)
         featureFrame = featureTracker.trackImage(t, _img, _img1);
     //printf("featureTracker time: %f\n", featureTrackerTime.toc());
 
+    // gDebugCol1("map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>>");
+    // gDebugCol1("id，(x,y,z,pu,pv,vx,vy)");
+    // gDebugCol1(featureFrame.size());
+    // for(const auto& val:featureFrame) {
+    //   gDebugCol1(val.first);
+    //   gDebugCol1(val.second.size());
+    //   gDebugCol1(val.second.at(0).first);
+    //   gDebugCol1(val.second.at(0).second);
+    // }
+    // gDebugCol3() << G_SPLIT_LINE;
+    // gDebugCol1(featureFrame.size());
+    gDebugCol3() << G_SPLIT_LINE;
+
     // 发布跟踪图像
     if (SHOW_TRACK)
     {
+//    ROS_INFO("[GXT] :SHOW_TRACK");
         cv::Mat imgTrack = featureTracker.getTrackImage();
         pubTrackImage(imgTrack, t);
     }
@@ -208,6 +223,7 @@ void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1)
     // 添加一帧特征点，处理
     if(MULTIPLE_THREAD)  
     {     
+      // 如果是多线程，就是每两帧添加一个特征图像
         if(inputImageCnt % 2 == 0)
         {
             mBuf.lock();
@@ -217,12 +233,16 @@ void Estimator::inputImage(double t, const cv::Mat &_img, const cv::Mat &_img1)
     }
     else
     {
+      // 如果不是多线程，就是每帧添加一个特征图像
         mBuf.lock();
         featureBuf.push(make_pair(t, featureFrame));
         mBuf.unlock();
-        TicToc processTime;
+        // TicToc processTime;
+    //
+        TIME_BEGIN(processMeasurements);
         processMeasurements();
-        printf("process time: %f\n", processTime.toc());
+    //
+        // printf("process time: %f\n", processTime.toc());
     }
     
 }
@@ -336,6 +356,7 @@ void Estimator::processMeasurements()
                 else
                 {
                     printf("wait for imu ... \n");
+                    //因为没有用多线程，为了不阻塞就直接结束
                     if (! MULTIPLE_THREAD)
                         return;
                     std::chrono::milliseconds dura(5);
@@ -345,6 +366,7 @@ void Estimator::processMeasurements()
             mBuf.lock();
             if(USE_IMU)
                 // 前一帧与当前帧图像之间的IMU数据
+        //      把时间在prevTime和curTime的数据放到accVector和gyrVector
                 getIMUInterval(prevTime, curTime, accVector, gyrVector);
 
             featureBuf.pop();
@@ -362,7 +384,7 @@ void Estimator::processMeasurements()
                 // Rs，Ps，Vs
                 for(size_t i = 0; i < accVector.size(); i++)
                 {
-                    double dt;
+                    double dt; // dt就是两帧acc的时间间隔
                     if(i == 0)
                         dt = accVector[i].first - prevTime;
                     else if (i == accVector.size() - 1)
@@ -1345,7 +1367,7 @@ void Estimator::optimization()
     for (auto &it_per_id : f_manager.feature)
     {
         it_per_id.used_num = it_per_id.feature_per_frame.size();
-        if (it_per_id.used_num < 4)
+        if (it_per_id.used_num < 4) // only select used_num>=4
             continue;
  
         ++feature_index;
@@ -1374,7 +1396,7 @@ void Estimator::optimization()
             // 双目，重投影误差
             if(STEREO && it_per_frame.is_stereo)
             {                
-                Vector3d pts_j_right = it_per_frame.pointRight;
+                Vector3d pts_j_right = it_per_frame.pointRight;// 归一化right相机平面点
                 if(imu_i != imu_j)
                 {
                     // 首帧与当前观测帧右目建立重投影误差

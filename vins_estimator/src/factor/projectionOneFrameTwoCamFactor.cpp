@@ -63,10 +63,10 @@ bool ProjectionOneFrameTwoCamFactor::Evaluate(double const *const *parameters, d
     TicToc tic_toc;
 
     // 优化变量：外参（左目），外参（右目），特征点逆深度，相机与IMU时差
-    Eigen::Vector3d tic(parameters[0][0], parameters[0][1], parameters[0][2]);
+    Eigen::Vector3d tic(parameters[0][0], parameters[0][1], parameters[0][2]); // t_i_lc
     Eigen::Quaterniond qic(parameters[0][6], parameters[0][3], parameters[0][4], parameters[0][5]);
 
-    Eigen::Vector3d tic2(parameters[1][0], parameters[1][1], parameters[1][2]);
+    Eigen::Vector3d tic2(parameters[1][0], parameters[1][1], parameters[1][2]); // t_i_rc
     Eigen::Quaterniond qic2(parameters[1][6], parameters[1][3], parameters[1][4], parameters[1][5]);
 
     double inv_dep_i = parameters[2][0];
@@ -79,17 +79,17 @@ bool ProjectionOneFrameTwoCamFactor::Evaluate(double const *const *parameters, d
     pts_j_td = pts_j - (td - td_j) * velocity_j;
 
     // 左目归一化相机点
-    Eigen::Vector3d pts_camera_i = pts_i_td / inv_dep_i;
+    Eigen::Vector3d pts_camera_i = pts_i_td / inv_dep_i; // t_lc_p
     // 左目IMU点
-    Eigen::Vector3d pts_imu_i = qic * pts_camera_i + tic;
-    Eigen::Vector3d pts_imu_j = pts_imu_i;
-    Eigen::Vector3d pts_camera_j = qic2.inverse() * (pts_imu_j - tic2);
-    Eigen::Map<Eigen::Vector2d> residual(residuals);
+    Eigen::Vector3d pts_imu_i = qic * pts_camera_i + tic; // t_i_p
+    Eigen::Vector3d pts_imu_j = pts_imu_i; // t_i_p
+    Eigen::Vector3d pts_camera_j = qic2.inverse() * (pts_imu_j - tic2); // t_rc_p
+    Eigen::Map<Eigen::Vector2d> residual(residuals); // map 2d
 
 #ifdef UNIT_SPHERE_ERROR 
     residual =  tangent_base * (pts_camera_j.normalized() - pts_j_td.normalized());
 #else
-    double dep_j = pts_camera_j.z();
+    double dep_j = pts_camera_j.z(); // t_rc_p.z()
     residual = (pts_camera_j / dep_j).head<2>() - pts_j_td.head<2>();
 #endif
 

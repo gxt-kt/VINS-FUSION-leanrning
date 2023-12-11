@@ -71,8 +71,8 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
     {
         // 左目对应特征点
         FeaturePerFrame f_per_fra(id_pts.second[0].second, td);
-        assert(id_pts.second[0].first == 0);
-        if(id_pts.second.size() == 2)
+        assert(id_pts.second[0].first == 0); // because 左目 must ==0
+        if(id_pts.second.size() == 2) // has right
         {
             // 右目对应特征点
             f_per_fra.rightObservation(id_pts.second[1].second);
@@ -82,14 +82,14 @@ bool FeatureManager::addFeatureCheckParallax(int frame_count, const map<int, vec
         // 特征id
         int feature_id = id_pts.first;
         auto it = find_if(feature.begin(), feature.end(), [feature_id](const FeaturePerId &it)
-                          {
+                          { // find if current id has existed in feature
             return it.feature_id == feature_id;
                           });
 
         // 新特征点加入feature集合
-        if (it == feature.end())
+        if (it == feature.end()) // not exist
         {
-            // 记录特征点id，当前帧索引
+            // 记录特征点id，当前帧索引 // first appear add start_frame
             feature.push_back(FeaturePerId(feature_id, frame_count));
             // 添加一个特征点数据
             feature.back().feature_per_frame.push_back(f_per_fra);
@@ -315,14 +315,14 @@ bool FeatureManager::solvePoseByPnP(Eigen::Matrix3d &R, Eigen::Vector3d &P,
 void FeatureManager::initFramePoseByPnP(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vector3d tic[], Matrix3d ric[])
 {
 
-    if(frameCnt > 0)
+    if(frameCnt > 0) // after init frameCnt=10
     {
         vector<cv::Point2f> pts2D;
         vector<cv::Point3f> pts3D;
         // 遍历当前帧特征点
         for (auto &it_per_id : feature)
         {
-            if (it_per_id.estimated_depth > 0)
+            if (it_per_id.estimated_depth > 0) // 如果该特征点的估计深度大于0（即已经成功三角化得到三维坐标）
             {
                 int index = frameCnt - it_per_id.start_frame;
                 // 特征点一直被跟踪到了
@@ -381,11 +381,17 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
         {
             // 起始观测帧位姿 Tcw
             int imu_i = it_per_id.start_frame;
-            Eigen::Matrix<double, 3, 4> leftPose;
-            Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0];
-            Eigen::Matrix3d R0 = Rs[imu_i] * ric[0];
+            Eigen::Matrix<double, 3, 4> leftPose; // Tcw
+            /*
+             *  Ps[imu_i]: imu_i时刻的imu位姿,即imu与世界坐标系间的位移
+                Rs[imu_i]: imu_i时刻的imu旋转矩阵,即imu坐标系相对世界坐标系的旋转
+                tic[0]: 左目相机相对imu的位移变换
+                ric[0]: 左目相机相对imu的旋转变换
+             */
+            Eigen::Vector3d t0 = Ps[imu_i] + Rs[imu_i] * tic[0]; // 计算imu_i时刻,左目相机相对世界坐标系的位移。
+            Eigen::Matrix3d R0 = Rs[imu_i] * ric[0]; // 计算左目相机坐标系相对imu坐标系的旋转。
             leftPose.leftCols<3>() = R0.transpose();
-            leftPose.rightCols<1>() = -R0.transpose() * t0;
+            leftPose.rightCols<1>() = -R0.transpose() * t0; // shang sanjiao juzhen qiu ni // 左目相机与世界坐标系间的运动关系
             //cout << "left pose " << leftPose << endl;
 
             // 起始观测帧位姿，右目 Tcw
@@ -398,8 +404,8 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
 
             // 取左右目对应的归一化相机平面点
             Eigen::Vector2d point0, point1;
-            Eigen::Vector3d point3d;
-            point0 = it_per_id.feature_per_frame[0].point.head(2);
+            Eigen::Vector3d point3d; // calculate 3d point after triangulatepoint
+            point0 = it_per_id.feature_per_frame[0].point.head(2);// 提取该帧左目特征点在图像平面的归一化坐标,该坐标通常是归一化后的像素坐标。
             point1 = it_per_id.feature_per_frame[0].pointRight.head(2);
             //cout << "point0 " << point0.transpose() << endl;
             //cout << "point1 " << point1.transpose() << endl;
@@ -407,13 +413,13 @@ void FeatureManager::triangulate(int frameCnt, Vector3d Ps[], Matrix3d Rs[], Vec
             // SVD计算三角化点
             triangulatePoint(leftPose, rightPose, point0, point1, point3d);
             // 相机点
-            Eigen::Vector3d localPoint;
+            Eigen::Vector3d localPoint; // localPoint is tcp
             localPoint = leftPose.leftCols<3>() * point3d + leftPose.rightCols<1>();
             // 设置深度值
             double depth = localPoint.z();
             if (depth > 0)
                 it_per_id.estimated_depth = depth;
-            else
+            else  // if <=0 then calculate error
                 it_per_id.estimated_depth = INIT_DEPTH;
             /*
             Vector3d ptsGt = pts_gt[it_per_id.feature_id];

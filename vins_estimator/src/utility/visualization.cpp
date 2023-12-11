@@ -33,6 +33,7 @@ size_t pub_counter = 0;
 
 void registerPub(ros::NodeHandle &n)
 {
+  // imu 预积分出来的具体位姿（高频）
     pub_latest_odometry = n.advertise<nav_msgs::Odometry>("imu_propagate", 1000);
     pub_path = n.advertise<nav_msgs::Path>("path", 1000);
     pub_odometry = n.advertise<nav_msgs::Odometry>("odometry", 1000);
@@ -155,22 +156,59 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
         path.poses.push_back(pose_stamped);
         pub_path.publish(path);
 
-        // write result to file
+        // // write result to file
+        // ofstream foutC(VINS_RESULT_PATH, ios::app);
+        // foutC.setf(ios::fixed, ios::floatfield);
+        // foutC.precision(0);
+        // foutC << header.stamp.toSec() * 1e9 << ",";
+        // foutC.precision(5);
+        // foutC << estimator.Ps[WINDOW_SIZE].x() << ","
+        //       << estimator.Ps[WINDOW_SIZE].y() << ","
+        //       << estimator.Ps[WINDOW_SIZE].z() << ","
+        //       << tmp_Q.w() << ","
+        //       << tmp_Q.x() << ","
+        //       << tmp_Q.y() << ","
+        //       << tmp_Q.z() << ","
+        //       << estimator.Vs[WINDOW_SIZE].x() << ","
+        //       << estimator.Vs[WINDOW_SIZE].y() << ","
+        //       << estimator.Vs[WINDOW_SIZE].z() << "," << endl;
+    
+    
+        // write result to file // for evo tools
         ofstream foutC(VINS_RESULT_PATH, ios::app);
         foutC.setf(ios::fixed, ios::floatfield);
         foutC.precision(0);
-        foutC << header.stamp.toSec() * 1e9 << ",";
+        foutC << header.stamp.toNSec() << " ";
+
+        Eigen::Vector3d translation(4.773746, -1.758123, 0.862048);  
+        Eigen::Quaterniond quaternion(0.419303, -0.193000, -0.884701, -0.065125);  
+
+        Eigen::Vector3d p_translation(estimator.Ps[WINDOW_SIZE].x(),estimator.Ps[WINDOW_SIZE].y(),estimator.Ps[WINDOW_SIZE].z());  
+        Eigen::Quaterniond p_quaternion(tmp_Q.w(),tmp_Q.x(),tmp_Q.y(),tmp_Q.z());  
+
+        Eigen::Vector3d pp_translation=p_translation+translation;  
+        Eigen::Quaterniond pp_quaternion=quaternion.inverse()*p_quaternion;  
+      
+
         foutC.precision(5);
-        foutC << estimator.Ps[WINDOW_SIZE].x() << ","
-              << estimator.Ps[WINDOW_SIZE].y() << ","
-              << estimator.Ps[WINDOW_SIZE].z() << ","
-              << tmp_Q.w() << ","
-              << tmp_Q.x() << ","
-              << tmp_Q.y() << ","
-              << tmp_Q.z() << ","
-              << estimator.Vs[WINDOW_SIZE].x() << ","
-              << estimator.Vs[WINDOW_SIZE].y() << ","
-              << estimator.Vs[WINDOW_SIZE].z() << "," << endl;
+    #if 1
+        foutC << estimator.Ps[WINDOW_SIZE].x() << " "
+              << estimator.Ps[WINDOW_SIZE].y() << " "
+              << estimator.Ps[WINDOW_SIZE].z() << " "
+              << tmp_Q.w() << " "
+              << tmp_Q.x() << " "
+              << tmp_Q.y() << " "
+              << tmp_Q.z() << std::endl;
+    #else
+        foutC << pp_translation.x() << " "
+              << pp_translation.y() << " "
+              << pp_translation.z() << " "
+              << pp_quaternion.w() << " "
+              << pp_quaternion.x() << " "
+              << pp_quaternion.y() << " "
+              << pp_quaternion.z() << std::endl;
+    #endif
+
         foutC.close();
         Eigen::Vector3d tmp_T = estimator.Ps[WINDOW_SIZE];
         printf("time: %f, t: %f %f %f q: %f %f %f %f \n", header.stamp.toSec(), tmp_T.x(), tmp_T.y(), tmp_T.z(),

@@ -17,6 +17,7 @@
 class Utility
 {
   public:
+    // convert a 3x vector to quaternion
     template <typename Derived>
     static Eigen::Quaternion<typename Derived::Scalar> deltaQ(const Eigen::MatrixBase<Derived> &theta)
     {

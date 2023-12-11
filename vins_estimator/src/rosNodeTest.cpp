@@ -21,6 +21,8 @@
 #include "estimator/parameters.h"
 #include "utility/visualization.h"
 
+#include "common.hpp"
+
 Estimator estimator;
 
 queue<sensor_msgs::ImuConstPtr> imu_buf;
@@ -118,22 +120,27 @@ void sync_process()
                 estimator.inputImage(time, image0, image1);
         }
         else
-        {
+        { //不是双目走这个
             cv::Mat image;
             std_msgs::Header header;
             double time = 0;
             m_buf.lock();
             if(!img0_buf.empty())
             {
+              ROS_INFO("get image");
                 time = img0_buf.front()->header.stamp.toSec();
                 header = img0_buf.front()->header;
                 image = getImageFromMsg(img0_buf.front());
                 img0_buf.pop();
             }
             m_buf.unlock();
+
+            // 为啥要把这个移出来而不是放到if里处理呢，是因为可以早点解锁。
             if(!image.empty())
                 estimator.inputImage(time, image);
         }
+    // 休眠一下，保证这个while1的线程不是总是在跑
+    // 个人认为还有一个原因是不能一直高频率占锁，不过当然也是因为这里不需要那么高频访问，所以可以延时
 
         std::chrono::milliseconds dura(2);
         std::this_thread::sleep_for(dura);
@@ -163,6 +170,7 @@ void imu_callback(const sensor_msgs::ImuConstPtr &imu_msg)
 */
 void feature_callback(const sensor_msgs::PointCloudConstPtr &feature_msg)
 {
+  gDebugCol3(feature_callback);
     map<int, vector<pair<int, Eigen::Matrix<double, 7, 1>>>> featureFrame;
     for (unsigned int i = 0; i < feature_msg->points.size(); i++)
     {
@@ -245,9 +253,17 @@ void cam_switch_callback(const std_msgs::BoolConstPtr &switch_msg)
 
 int main(int argc, char **argv)
 {
+    setlocale(LC_ALL,"");
+
+    gDebugCol3() << "begin rosNodeTest";
+    gDebugCol3() << "sleep10s ... ";
+    gxt::Sleep(10);
+    gDebugCol3() << "sleep10 done";
+
     ros::init(argc, argv, "vins_estimator");
     ros::NodeHandle n("~");
-    ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Info);
+//    ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Info);
+    ros::console::set_logger_level(ROSCONSOLE_DEFAULT_NAME, ros::console::levels::Debug);
 
     if(argc != 2)
     {
@@ -275,21 +291,28 @@ int main(int argc, char **argv)
 
     // 订阅IMU
     ros::Subscriber sub_imu = n.subscribe(IMU_TOPIC, 2000, imu_callback, ros::TransportHints().tcpNoDelay());
+
     // 订阅一帧跟踪的特征点
     ros::Subscriber sub_feature = n.subscribe("/feature_tracker/feature", 2000, feature_callback);
+
     // 订阅左图
     ros::Subscriber sub_img0 = n.subscribe(IMAGE0_TOPIC, 100, img0_callback);
     // 订阅右图
     ros::Subscriber sub_img1 = n.subscribe(IMAGE1_TOPIC, 100, img1_callback);
+
     // 订阅，重启节点
     ros::Subscriber sub_restart = n.subscribe("/vins_restart", 100, restart_callback);
+
     // 订阅，双目下，IMU开关
     ros::Subscriber sub_imu_switch = n.subscribe("/vins_imu_switch", 100, imu_switch_callback);
+
     // 订阅，单双目切换
     ros::Subscriber sub_cam_switch = n.subscribe("/vins_cam_switch", 100, cam_switch_callback);
 
+    ROS_WARN("[GXT]: 准备开启线程");
     // 从两个图像队列中取出最早的一帧，并从队列删除，双目要求两帧时差不得超过0.003s
     std::thread sync_thread{sync_process};
+    ROS_WARN("[GXT]: 线程开启完成，开始ros::spin();"); 
     ros::spin();
 
     return 0;
