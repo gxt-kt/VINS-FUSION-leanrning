@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "common.hpp"
+
 // #include "fixed.hpp"
 // #include "ios.hpp"
 // #include "math.hpp"

@@ -115,6 +115,10 @@ void Estimator::setParameter()
     ProjectionTwoFrameOneCamFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
     ProjectionTwoFrameTwoCamFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
     ProjectionOneFrameTwoCamFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
+    // NOTE: gxt add sqrt_info
+    GxtProjectionTwoFrameOneCamFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
+    GxtProjectionTwoFrameTwoCamFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
+    GxtProjectionOneFrameTwoCamFactor::sqrt_info = FOCAL_LENGTH / 1.5 * Matrix2d::Identity();
     // 图像的时间戳晚于实际采样时候的时间，硬件传输等因素
     td = TD;
     g = G;
@@ -716,7 +720,10 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
         // 三角化当前帧特征点
         f_manager.triangulate(frame_count, Ps, Rs, tic, ric);
         // 滑窗执行Ceres优化，边缘化，更新滑窗内图像帧的状态（位姿、速度、偏置、外参、逆深度、相机与IMU时差）
-        optimization();
+        // optimization();
+        gDebugWarn("begin gxt_optimization");
+        TIME_CODE(gxt_optimization());
+
         set<int> removeIndex;
         /**
          * 剔除outlier点
@@ -1221,6 +1228,109 @@ void Estimator::double2vector()
 }
 
 /**
+ * 更新优化后的参数，包括位姿、速度、偏置、外参、特征点逆深度、相机与IMU时差
+*/
+void Estimator::gxt_double2vector()
+{
+    // 第一帧优化前位姿
+    Vector3d origin_R0 = Utility::R2ypr(Rs[0]);
+    Vector3d origin_P0 = Ps[0];
+
+    // 如果上一次优化失败了，Rs、Ps都会被清空，用备份的last_R0、last_P0
+    // if (failure_occur)
+    // {
+    //     origin_R0 = Utility::R2ypr(last_R0);
+    //     origin_P0 = last_P0;
+    //     failure_occur = 0;
+    // }
+
+    // 使用IMU时，第一帧没有固定，会有姿态变化
+    if(USE_IMU)
+    {
+        // 本次优化后第一帧位姿
+        Vector3d origin_R00 = Utility::R2ypr(Quaterniond(para_Pose[0][6],
+                                                          para_Pose[0][3],
+                                                          para_Pose[0][4],
+                                                          para_Pose[0][5]).toRotationMatrix());
+        // yaw角差量
+        double y_diff = origin_R0.x() - origin_R00.x();
+        // yaw角差量对应旋转矩阵
+        Matrix3d rot_diff = Utility::ypr2R(Vector3d(y_diff, 0, 0));
+
+        // pitch角接近90°，todo
+        if (abs(abs(origin_R0.y()) - 90) < 1.0 || abs(abs(origin_R00.y()) - 90) < 1.0)
+        {
+            ROS_DEBUG("euler singular point!");
+            // 计算旋转位姿变换
+            rot_diff = Rs[0] * Quaterniond(para_Pose[0][6],
+                                           para_Pose[0][3],
+                                           para_Pose[0][4],
+                                           para_Pose[0][5]).toRotationMatrix().transpose();
+        }
+
+        // 遍历滑窗，位姿、速度全部施加优化前后第一帧的位姿变换（只有旋转） todo
+        for (int i = 0; i <= WINDOW_SIZE; i++)
+        {
+
+            Rs[i] = rot_diff * Quaterniond(para_Pose[i][6], para_Pose[i][3], para_Pose[i][4], para_Pose[i][5]).normalized().toRotationMatrix();
+            
+            Ps[i] = rot_diff * Vector3d(para_Pose[i][0] - para_Pose[0][0],
+                                    para_Pose[i][1] - para_Pose[0][1],
+                                    para_Pose[i][2] - para_Pose[0][2]) + origin_P0;
+
+            Vs[i] = rot_diff * Vector3d(para_SpeedBias[i][0],
+                                        para_SpeedBias[i][1],
+                                        para_SpeedBias[i][2]);
+
+            Bas[i] = Vector3d(para_SpeedBias[i][3],
+                                para_SpeedBias[i][4],
+                                para_SpeedBias[i][5]);
+
+            Bgs[i] = Vector3d(para_SpeedBias[i][6],
+                                para_SpeedBias[i][7],
+                                para_SpeedBias[i][8]);
+            
+        }
+    }
+    // 不使用IMU时，第一帧固定，后面的位姿直接赋值
+    else
+    {
+        for (int i = 0; i <= WINDOW_SIZE; i++)
+        {
+            Rs[i] = Quaterniond(para_Pose[i][6], para_Pose[i][3], para_Pose[i][4], para_Pose[i][5]).normalized().toRotationMatrix();
+            
+            Ps[i] = Vector3d(para_Pose[i][0], para_Pose[i][1], para_Pose[i][2]);
+        }
+    }
+
+    // 更新外参
+    if(USE_IMU)
+    {
+        for (int i = 0; i < NUM_OF_CAM; i++)
+        {
+            tic[i] = Vector3d(para_Ex_Pose[i][0],
+                              para_Ex_Pose[i][1],
+                              para_Ex_Pose[i][2]);
+            ric[i] = Quaterniond(para_Ex_Pose[i][6],
+                                 para_Ex_Pose[i][3],
+                                 para_Ex_Pose[i][4],
+                                 para_Ex_Pose[i][5]).normalized().toRotationMatrix();
+        }
+    }
+
+    // 更新逆深度
+    VectorXd dep = f_manager.getDepthVector();
+    for (int i = 0; i < f_manager.getFeatureCount(); i++)
+        dep(i) = para_Feature[i][0];
+    f_manager.setDepth(dep);
+
+    // 更新相机与IMU时差
+    if(USE_IMU)
+        td = para_Td[0][0];
+
+}
+
+/**
  * 失败检测
 */
 bool Estimator::failureDetection()
@@ -1449,6 +1559,915 @@ void Estimator::optimization()
     // 更新优化后的参数，包括位姿、速度、偏置、外参、特征点逆深度、相机与IMU时差
     double2vector();
     //printf("frame_count: %d \n", frame_count);
+
+    if(frame_count < WINDOW_SIZE)
+        return;
+    
+    /**
+     * Step4. 边缘化操作
+    */
+
+    // 以下是边缘化操作
+    TicToc t_whole_marginalization;
+    // Marg最早帧
+    if (marginalization_flag == MARGIN_OLD)
+    {
+        MarginalizationInfo *marginalization_info = new MarginalizationInfo();
+        // 滑窗中的帧位姿、速度、偏置、外参、特征点逆深度等参数，转换成数组
+        vector2double();
+
+        // 先验残差
+        if (last_marginalization_info && last_marginalization_info->valid)
+        {
+            vector<int> drop_set;
+            // 上一次Marg剩下的参数块
+            for (int i = 0; i < static_cast<int>(last_marginalization_parameter_blocks.size()); i++)
+            {
+                if (last_marginalization_parameter_blocks[i] == para_Pose[0] ||
+                    last_marginalization_parameter_blocks[i] == para_SpeedBias[0])
+                    drop_set.push_back(i);
+            }
+            // construct new marginlization_factor
+            MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);
+            ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(marginalization_factor, NULL,
+                                                                           last_marginalization_parameter_blocks,
+                                                                           drop_set);
+            marginalization_info->addResidualBlockInfo(residual_block_info);
+        }
+
+        // 滑窗首帧与后一帧之间的IMU残差 
+        if(USE_IMU)
+        {
+            if (pre_integrations[1]->sum_dt < 10.0)
+            {
+                IMUFactor* imu_factor = new IMUFactor(pre_integrations[1]);
+                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(imu_factor, NULL,
+                                                                           vector<double *>{para_Pose[0], para_SpeedBias[0], para_Pose[1], para_SpeedBias[1]},
+                                                                           vector<int>{0, 1});
+                marginalization_info->addResidualBlockInfo(residual_block_info);
+            }
+        }
+
+        // 滑窗首帧与其他帧之间的视觉重投影残差
+        {
+            // 遍历特征点
+            int feature_index = -1;
+            for (auto &it_per_id : f_manager.feature)
+            {
+                it_per_id.used_num = it_per_id.feature_per_frame.size();
+                if (it_per_id.used_num < 4)
+                    continue;
+
+                ++feature_index;
+
+                int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
+                if (imu_i != 0)
+                    continue;
+
+                // 首帧观测帧归一化相机平面点
+                Vector3d pts_i = it_per_id.feature_per_frame[0].point;
+
+                // 遍历观测帧
+                for (auto &it_per_frame : it_per_id.feature_per_frame)
+                {
+                    imu_j++;
+                    // 非首个观测帧
+                    if(imu_i != imu_j)
+                    {
+                        Vector3d pts_j = it_per_frame.point;
+                        ProjectionTwoFrameOneCamFactor *f_td = new ProjectionTwoFrameOneCamFactor(pts_i, pts_j, it_per_id.feature_per_frame[0].velocity, it_per_frame.velocity,
+                                                                          it_per_id.feature_per_frame[0].cur_td, it_per_frame.cur_td);
+                        ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(f_td, loss_function,
+                                                                                        vector<double *>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]},
+                                                                                        vector<int>{0, 3});
+                        marginalization_info->addResidualBlockInfo(residual_block_info);
+                    }
+                    if(STEREO && it_per_frame.is_stereo)
+                    {
+                        Vector3d pts_j_right = it_per_frame.pointRight;
+                        if(imu_i != imu_j)
+                        {
+                            ProjectionTwoFrameTwoCamFactor *f = new ProjectionTwoFrameTwoCamFactor(pts_i, pts_j_right, it_per_id.feature_per_frame[0].velocity, it_per_frame.velocityRight,
+                                                                          it_per_id.feature_per_frame[0].cur_td, it_per_frame.cur_td);
+                            ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(f, loss_function,
+                                                                                           vector<double *>{para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Ex_Pose[1], para_Feature[feature_index], para_Td[0]},
+                                                                                           vector<int>{0, 4});
+                            marginalization_info->addResidualBlockInfo(residual_block_info);
+                        }
+                        else
+                        {
+                            ProjectionOneFrameTwoCamFactor *f = new ProjectionOneFrameTwoCamFactor(pts_i, pts_j_right, it_per_id.feature_per_frame[0].velocity, it_per_frame.velocityRight,
+                                                                          it_per_id.feature_per_frame[0].cur_td, it_per_frame.cur_td);
+                            ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(f, loss_function,
+                                                                                           vector<double *>{para_Ex_Pose[0], para_Ex_Pose[1], para_Feature[feature_index], para_Td[0]},
+                                                                                           vector<int>{2});
+                            marginalization_info->addResidualBlockInfo(residual_block_info);
+                        }
+                    }
+                }
+            }
+        }
+
+        TicToc t_pre_margin;
+        marginalization_info->preMarginalize();
+        ROS_DEBUG("pre marginalization %f ms", t_pre_margin.toc());
+        
+        // 执行marg边缘化
+        TicToc t_margin;
+        marginalization_info->marginalize();
+        ROS_DEBUG("marginalization %f ms", t_margin.toc());
+
+        // marg首帧之后，将参数数组中每个位置的值设为前面元素的值，记录到addr_shift里面
+        // [<p1,p0>,<p2,p1>,...]
+        std::unordered_map<long, double *> addr_shift;
+        for (int i = 1; i <= WINDOW_SIZE; i++)
+        {
+            addr_shift[reinterpret_cast<long>(para_Pose[i])] = para_Pose[i - 1];
+            printf("pose %ld,%ld\n",reinterpret_cast<long>(para_Pose[i]),reinterpret_cast<long>(para_Pose[i-1]));
+            if(USE_IMU)
+            {
+                addr_shift[reinterpret_cast<long>(para_SpeedBias[i])] = para_SpeedBias[i - 1];
+                printf("speedBias %ld,%ld\n",reinterpret_cast<long>(para_SpeedBias[i]),reinterpret_cast<long>(para_SpeedBias[i-1]));
+            }
+        }
+        for (int i = 0; i < NUM_OF_CAM; i++)
+        {
+            addr_shift[reinterpret_cast<long>(para_Ex_Pose[i])] = para_Ex_Pose[i];
+            printf("exPose %ld,%ld\n",reinterpret_cast<long>(para_Ex_Pose[i]),reinterpret_cast<long>(para_Ex_Pose[i]));
+        }
+
+        addr_shift[reinterpret_cast<long>(para_Td[0])] = para_Td[0];
+        printf("td %ld,%ld\n",reinterpret_cast<long>(para_Td[0]),reinterpret_cast<long>(para_Td[0]));
+
+        vector<double *> parameter_blocks = marginalization_info->getParameterBlocks(addr_shift);
+
+        if (last_marginalization_info)
+            delete last_marginalization_info;
+        // 保存marg信息
+        last_marginalization_info = marginalization_info;
+        last_marginalization_parameter_blocks = parameter_blocks;
+        
+    }
+    // Marg新帧
+    else
+    {
+        if (last_marginalization_info &&
+            std::count(std::begin(last_marginalization_parameter_blocks), std::end(last_marginalization_parameter_blocks), para_Pose[WINDOW_SIZE - 1]))
+        {
+
+            MarginalizationInfo *marginalization_info = new MarginalizationInfo();
+            vector2double();
+            if (last_marginalization_info && last_marginalization_info->valid)
+            {
+                vector<int> drop_set;
+                for (int i = 0; i < static_cast<int>(last_marginalization_parameter_blocks.size()); i++)
+                {
+                    ROS_ASSERT(last_marginalization_parameter_blocks[i] != para_SpeedBias[WINDOW_SIZE - 1]);
+                    if (last_marginalization_parameter_blocks[i] == para_Pose[WINDOW_SIZE - 1])
+                        drop_set.push_back(i);
+                }
+                // construct new marginlization_factor
+                MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);
+                ResidualBlockInfo *residual_block_info = new ResidualBlockInfo(marginalization_factor, NULL,
+                                                                               last_marginalization_parameter_blocks,
+                                                                               drop_set);
+
+                marginalization_info->addResidualBlockInfo(residual_block_info);
+            }
+
+            TicToc t_pre_margin;
+            ROS_DEBUG("begin marginalization");
+            marginalization_info->preMarginalize();
+            ROS_DEBUG("end pre marginalization, %f ms", t_pre_margin.toc());
+
+            TicToc t_margin;
+            ROS_DEBUG("begin marginalization");
+            marginalization_info->marginalize();
+            ROS_DEBUG("end marginalization, %f ms", t_margin.toc());
+            
+            // [<p0,p0>, <p1,p1>,...,<pn-1,pn-1>,<pn,pn-1>]
+            std::unordered_map<long, double *> addr_shift;
+            for (int i = 0; i <= WINDOW_SIZE; i++)
+            {
+                // 被Marg帧
+                if (i == WINDOW_SIZE - 1)
+                    continue;
+                // 当前帧
+                else if (i == WINDOW_SIZE)
+                {
+                    addr_shift[reinterpret_cast<long>(para_Pose[i])] = para_Pose[i - 1];
+                    if(USE_IMU)
+                        addr_shift[reinterpret_cast<long>(para_SpeedBias[i])] = para_SpeedBias[i - 1];
+                }
+                else
+                {
+                    addr_shift[reinterpret_cast<long>(para_Pose[i])] = para_Pose[i];
+                    if(USE_IMU)
+                        addr_shift[reinterpret_cast<long>(para_SpeedBias[i])] = para_SpeedBias[i];
+                }
+            }
+            for (int i = 0; i < NUM_OF_CAM; i++)
+                addr_shift[reinterpret_cast<long>(para_Ex_Pose[i])] = para_Ex_Pose[i];
+
+            addr_shift[reinterpret_cast<long>(para_Td[0])] = para_Td[0];
+
+            
+            vector<double *> parameter_blocks = marginalization_info->getParameterBlocks(addr_shift);
+            if (last_marginalization_info)
+                delete last_marginalization_info;
+            last_marginalization_info = marginalization_info;
+            last_marginalization_parameter_blocks = parameter_blocks;
+            
+        }
+    }
+    //printf("whole marginalization costs: %f \n", t_whole_marginalization.toc());
+    //printf("whole time for ceres: %f \n", t_whole.toc());
+}
+
+
+/**
+ * 滑窗执行Ceres优化，边缘化，更新滑窗内图像帧的状态（位姿、速度、偏置、外参、逆深度、相机与IMU时差）
+*/
+void Estimator::gxt_optimization()
+{
+    // NOTE: for gxt_optimization
+  // debug value change
+    std::vector<double> debug_vector_inverse_deep_noopti;
+    std::vector<double> debug_vector_inverse_deep_opti;
+    std::vector<Vec7> debug_vector_pose_noopti;
+    std::vector<Vec7> debug_vector_pose_opti;
+    
+    TicToc t_whole, t_prepare;
+    // 滑窗中的帧位姿、速度、偏置、外参、特征点逆深度等参数，转换成数组
+    vector2double();
+
+
+    ceres::Problem problem;
+    ceres::LossFunction *loss_function;
+    //loss_function = NULL;
+    loss_function = new ceres::HuberLoss(1.0);
+    //loss_function = new ceres::CauchyLoss(1.0 / FOCAL_LENGTH);
+    //ceres::LossFunction* loss_function = new ceres::HuberLoss(1.0);
+    
+    // NOTE: for gxt_optimization
+    Problem gxt_problem(Problem::ProblemType::GENERIC_PROBLEM);
+  
+
+    /**
+     * Step1. 调用AddParameterBlock，显式添加待优化变量（类似于g2o中添加顶点），需要固定的顶点固定一下
+    */
+
+    // NOTE: for gxt_optimization
+    std::vector<std::shared_ptr<GxtPoseLocalParameterization>> vertexCams_vec;
+
+    // 遍历滑窗，添加位姿、速度、偏置参数
+    for (int i = 0; i < frame_count + 1; i++)
+    {
+        ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
+        problem.AddParameterBlock(para_Pose[i], SIZE_POSE, local_parameterization);
+        if(USE_IMU)
+            problem.AddParameterBlock(para_SpeedBias[i], SIZE_SPEEDBIAS);
+
+        // NOTE: for gxt_optimization
+        std::shared_ptr<GxtPoseLocalParameterization> gxt_local_parameterization(
+            new GxtPoseLocalParameterization());
+        VecX pose(7);
+        // 平移和四元数
+        pose << para_Pose[i][0], para_Pose[i][1], para_Pose[i][2],
+            para_Pose[i][3], para_Pose[i][4], para_Pose[i][5], para_Pose[i][6];
+        gxt_local_parameterization->SetParameters(pose.cast<my_type>());
+
+        debug_vector_pose_noopti.push_back(pose);
+
+        // NOTE: for gxt_optimization
+        // 如果不使用IMU，固定第一帧位姿，IMU下第一帧不固定
+        if(!USE_IMU) {
+          if(i==0) {
+            gxt_local_parameterization->SetFixed();
+          }
+        }
+
+
+        vertexCams_vec.push_back(gxt_local_parameterization);
+        gxt_problem.AddVertex(gxt_local_parameterization);
+        // if (USE_IMU) {
+        //     gDebugError("这里还缺内容");
+        //     problem.AddParameterBlock(para_SpeedBias[i], SIZE_SPEEDBIAS);
+        // }
+    }
+
+    // 如果不使用IMU，固定第一帧位姿，IMU下第一帧不固定
+    if(!USE_IMU)
+        problem.SetParameterBlockConstant(para_Pose[0]);
+
+
+    std::vector<std::shared_ptr<GxtPoseLocalParameterization>> vector_para_ex_pose;
+    for (int i = 0; i < NUM_OF_CAM; i++)
+    {
+        // 添加相机与IMU外参
+        ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
+        problem.AddParameterBlock(para_Ex_Pose[i], SIZE_POSE, local_parameterization);
+        // 估计外参
+        if ((ESTIMATE_EXTRINSIC && frame_count == WINDOW_SIZE && Vs[0].norm() > 0.2) || openExEstimation)
+        {
+            //ROS_INFO("estimate extinsic param");
+            openExEstimation = 1;
+        }
+        else
+        {
+            //ROS_INFO("fix extinsic param");
+            // 不估计外参的时候，固定外参
+            problem.SetParameterBlockConstant(para_Ex_Pose[i]);
+        }
+
+      // NOTE: for gxt_optimization
+      std::shared_ptr<GxtPoseLocalParameterization> gxt_local_parameterization(
+          new GxtPoseLocalParameterization());
+      VecX pose(7);
+      // 平移和四元数
+      pose << para_Ex_Pose[i][0], para_Ex_Pose[i][1], para_Ex_Pose[i][2],
+          para_Ex_Pose[i][3], para_Ex_Pose[i][4], para_Ex_Pose[i][5], para_Ex_Pose[i][6];
+      gxt_local_parameterization->SetParameters(pose.cast<my_type>());
+      // 估计外参
+      if ((ESTIMATE_EXTRINSIC && frame_count == WINDOW_SIZE && Vs[0].norm() > 0.2) || openExEstimation)
+      {
+          //ROS_INFO("estimate extinsic param");
+          openExEstimation = 1;
+      }
+      else
+      {
+          //ROS_INFO("fix extinsic param");
+          // 不估计外参的时候，固定外参
+          gxt_local_parameterization->SetFixed();
+      }
+      vector_para_ex_pose.push_back(gxt_local_parameterization);
+      gxt_problem.AddVertex(gxt_local_parameterization);
+    }
+
+    // NOTE: for gxt_optimization
+    std::shared_ptr<VertexTd> vertex_td(new VertexTd());
+    Vec1 para_td_vec;
+    para_td_vec << para_Td[0][0];
+    vertex_td->SetParameters(para_td_vec);
+    if (!ESTIMATE_TD || Vs[0].norm() < 0.2)
+        vertex_td->SetFixed();
+
+    // 添加相机与IMU时差
+    problem.AddParameterBlock(para_Td[0], 1);
+
+    if (!ESTIMATE_TD || Vs[0].norm() < 0.2)
+        problem.SetParameterBlockConstant(para_Td[0]);
+
+  
+    // NOTE: for gxt_optimization
+    // 添加imu的顶点
+    std::vector<std::shared_ptr<VertexMotion>> vector_vertex_motion;
+    vector_vertex_motion.resize(frame_count+1);
+    if(USE_IMU)
+    {
+        for (int i = 0; i < frame_count; i++)
+        {
+            // int j=i+1;
+            // if (pre_integrations[j]->sum_dt > 10.0) {
+            //     // gDebugError("真的会停吗？？") << pre_integrations[j]->sum_dt;
+            //     continue;
+            // }
+            std::shared_ptr<VertexMotion> vertex_motion(new VertexMotion());
+            Vec9 para_speedbias;
+            para_speedbias << para_SpeedBias[i][0], para_SpeedBias[i][1],
+                para_SpeedBias[i][2], para_SpeedBias[i][3],
+                para_SpeedBias[i][4], para_SpeedBias[i][5],
+                para_SpeedBias[i][6], para_SpeedBias[i][7],
+                para_SpeedBias[i][8];
+            vertex_motion->SetParameters(para_speedbias);
+
+            vector_vertex_motion.at(i)=vertex_motion;
+            gxt_problem.AddVertex(vertex_motion);
+        }
+        std::shared_ptr<VertexMotion> vertex_motion(new VertexMotion());
+        Vec9 para_speedbias;
+        para_speedbias << para_SpeedBias[frame_count][0], para_SpeedBias[frame_count][1],
+            para_SpeedBias[frame_count][2], para_SpeedBias[frame_count][3],
+            para_SpeedBias[frame_count][4], para_SpeedBias[frame_count][5],
+            para_SpeedBias[frame_count][6], para_SpeedBias[frame_count][7],
+            para_SpeedBias[frame_count][8];
+        vertex_motion->SetParameters(para_speedbias);
+
+        vector_vertex_motion.at(frame_count)=vertex_motion;
+        gxt_problem.AddVertex(vertex_motion);
+    }
+
+
+    // 添加imu的残差
+    if(USE_IMU)
+    {
+        for (int i = 0; i < frame_count; i++)
+        {
+            int j = i + 1;
+            // WARN: 作为对比，ceres我们先不加过滤
+            // if (pre_integrations[j]->sum_dt > 10.0)
+            //     continue;
+            // 前后帧之间建立IMU残差
+            IMUFactor* imu_factor = new IMUFactor(pre_integrations[j]);
+            // 后面四个参数为变量初始值，优化过程中会更新
+            problem.AddResidualBlock(imu_factor, NULL, para_Pose[i], para_SpeedBias[i], para_Pose[j], para_SpeedBias[j]);
+
+            // NOTE: for gxt_optimization
+            // 前后帧之间建立IMU残差
+            std::shared_ptr<GxtIMUFactor> gxt_imu_factor (new GxtIMUFactor(pre_integrations[j]));
+            gxt_imu_factor->AddVertex(vertexCams_vec.at(i));
+            gxt_imu_factor->AddVertex(vector_vertex_motion.at(i));
+            gxt_imu_factor->AddVertex(vertexCams_vec.at(j));
+            gxt_imu_factor->AddVertex(vector_vertex_motion.at(j));
+            gxt_problem.AddEdge(gxt_imu_factor);
+        }
+    }
+
+
+    // (3) 添加视觉重投影残差
+    int f_m_cnt = 0;
+    int feature_index = -1;
+    // NOTE: for gxt_optimization
+    std::vector<std::shared_ptr<Vertex>> vector_inverse_deep;
+    std::vector<int> vector_inverse_deep_index;
+    // 遍历特征点
+    for (auto &it_per_id : f_manager.feature)
+    {
+        it_per_id.used_num = it_per_id.feature_per_frame.size();
+        if (it_per_id.used_num < 4) // only select used_num>=4
+            continue;
+
+        ++feature_index;
+
+        // NOTE: for gxt_optimization
+        std::shared_ptr<GxtInverseDeep> inverse_deep(new GxtInverseDeep());
+        Vec1 inverse_deep_matrix;
+        inverse_deep_matrix << para_Feature[feature_index][0];
+        inverse_deep->SetParameters(inverse_deep_matrix);
+        vector_inverse_deep.push_back(inverse_deep);
+        vector_inverse_deep_index.push_back(feature_index);
+
+        gxt_problem.AddVertex(inverse_deep);
+
+        debug_vector_inverse_deep_noopti.push_back(para_Feature[feature_index][0]);
+
+        int imu_i = it_per_id.start_frame, imu_j = imu_i - 1;
+        
+        // 首帧归一化相机平面点
+        Vector3d pts_i = it_per_id.feature_per_frame[0].point;
+
+        // 遍历特征点的观测帧
+        for (auto &it_per_frame : it_per_id.feature_per_frame)
+        {
+            imu_j++;
+            // 非首帧观测帧
+            if (imu_i != imu_j)
+            {
+                // 当前观测帧归一化相机平面点
+                Vector3d pts_j = it_per_frame.point;
+                // 首帧与当前观测帧建立重投影误差
+                ProjectionTwoFrameOneCamFactor *f_td = new ProjectionTwoFrameOneCamFactor(pts_i, pts_j, it_per_id.feature_per_frame[0].velocity, it_per_frame.velocity,
+                                                                 it_per_id.feature_per_frame[0].cur_td, it_per_frame.cur_td);
+                // 优化变量：首帧位姿，当前帧位姿，外参（左目），特征点逆深度，相机与IMU时差
+                problem.AddResidualBlock(f_td, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Feature[feature_index], para_Td[0]);
+
+
+                // NOTE: for gxt_optimization
+                // 当前观测帧归一化相机平面点
+                // Vector3d pts_j = it_per_frame.point;
+                // 首帧与当前观测帧建立重投影误差
+                std::shared_ptr<GxtProjectionTwoFrameOneCamFactor> gxt_f_td(
+                    new GxtProjectionTwoFrameOneCamFactor(
+                        pts_i, pts_j, it_per_id.feature_per_frame[0].velocity,
+                        it_per_frame.velocity,
+                        it_per_id.feature_per_frame[0].cur_td,
+                        it_per_frame.cur_td));
+                gxt_f_td->tic << para_Ex_Pose[0][0] ,para_Ex_Pose[0][1],para_Ex_Pose[0][2];
+                gxt_f_td->qic.x()=para_Ex_Pose[0][3];
+                gxt_f_td->qic.y()=para_Ex_Pose[0][4];
+                gxt_f_td->qic.z()=para_Ex_Pose[0][5];
+                gxt_f_td->qic.w()=para_Ex_Pose[0][6];
+                gxt_f_td->td=para_Td[0][0];
+                // 优化变量：首帧位姿，当前帧位姿，外参（左目），特征点逆深度，相机与IMU时差
+               // std::vector<std::shared_ptr<Vertex>> edge_vertex;
+               // edge_vertex.push_back(vertexCams_vec.at(imu_i));
+               // edge_vertex.push_back(vertexCams_vec.at(imu_j));
+               // edge_vertex.push_back(vector_inverse_deep.at(feature_index));
+               gxt_f_td->AddVertex(vertexCams_vec.at(imu_i));
+               gxt_f_td->AddVertex(vertexCams_vec.at(imu_j));
+               gxt_f_td->AddVertex(vector_inverse_deep.at(feature_index));
+               gxt_problem.AddEdge(gxt_f_td);
+            }
+
+            // 双目，重投影误差
+            if(STEREO && it_per_frame.is_stereo)
+            {                
+                Vector3d pts_j_right = it_per_frame.pointRight;// 归一化right相机平面点
+                if(imu_i != imu_j)
+                {
+                    // 首帧与当前观测帧右目建立重投影误差
+                    ProjectionTwoFrameTwoCamFactor *f = new ProjectionTwoFrameTwoCamFactor(pts_i, pts_j_right, it_per_id.feature_per_frame[0].velocity, it_per_frame.velocityRight,
+                                                                 it_per_id.feature_per_frame[0].cur_td, it_per_frame.cur_td);
+                    // 优化变量：首帧位姿，当前帧位姿，外参（左目），外参（右目），特征点逆深度，相机与IMU时差
+                    problem.AddResidualBlock(f, loss_function, para_Pose[imu_i], para_Pose[imu_j], para_Ex_Pose[0], para_Ex_Pose[1], para_Feature[feature_index], para_Td[0]);
+
+                    // NOTE: for gxt_optimization
+                    // 当前观测帧归一化相机平面点
+                    // Vector3d pts_j = it_per_frame.point;
+                    // 首帧与当前观测帧建立重投影误差
+                    std::shared_ptr<GxtProjectionTwoFrameTwoCamFactor> gxt_f(
+                        new GxtProjectionTwoFrameTwoCamFactor(
+                            pts_i, pts_j_right,
+                            it_per_id.feature_per_frame[0].velocity,
+                            it_per_frame.velocityRight,
+                            it_per_id.feature_per_frame[0].cur_td,
+                            it_per_frame.cur_td));
+                    gxt_f->tic << para_Ex_Pose[0][0] ,para_Ex_Pose[0][1],para_Ex_Pose[0][2];
+                    gxt_f->qic.x()=para_Ex_Pose[0][3];
+                    gxt_f->qic.y()=para_Ex_Pose[0][4];
+                    gxt_f->qic.z()=para_Ex_Pose[0][5];
+                    gxt_f->qic.w()=para_Ex_Pose[0][6];
+                    gxt_f->tic2 << para_Ex_Pose[1][0] ,para_Ex_Pose[1][1],para_Ex_Pose[1][2];
+                    gxt_f->qic2.x()=para_Ex_Pose[1][3];
+                    gxt_f->qic2.y()=para_Ex_Pose[1][4];
+                    gxt_f->qic2.z()=para_Ex_Pose[1][5];
+                    gxt_f->qic2.w()=para_Ex_Pose[1][6];
+                    gxt_f->td=para_Td[0][0];
+                    // 优化变量：首帧位姿，当前帧位姿，外参（左目），特征点逆深度，相机与IMU时差
+                   // std::vector<std::shared_ptr<Vertex>> edge_vertex;
+                   // edge_vertex.push_back(vertexCams_vec.at(imu_i));
+                   // edge_vertex.push_back(vertexCams_vec.at(imu_j));
+                   // edge_vertex.push_back(vector_inverse_deep.at(feature_index));
+                   gxt_f->AddVertex(vertexCams_vec.at(imu_i));
+                   gxt_f->AddVertex(vertexCams_vec.at(imu_j));
+                   gxt_f->AddVertex(vector_inverse_deep.at(feature_index));
+                   gxt_problem.AddEdge(gxt_f);
+                }
+                else
+                {
+                    // 首帧左右目建立重投影误差
+                    ProjectionOneFrameTwoCamFactor *f = new ProjectionOneFrameTwoCamFactor(pts_i, pts_j_right, it_per_id.feature_per_frame[0].velocity, it_per_frame.velocityRight,
+                                                                 it_per_id.feature_per_frame[0].cur_td, it_per_frame.cur_td);
+                    // 优化变量：外参（左目），外参（右目），特征点逆深度，相机与IMU时差
+                    problem.AddResidualBlock(f, loss_function, para_Ex_Pose[0], para_Ex_Pose[1], para_Feature[feature_index], para_Td[0]);
+
+                    // NOTE: for gxt_optimization
+                    // 当前观测帧归一化相机平面点
+                    // Vector3d pts_j = it_per_frame.point;
+                    // 首帧与当前观测帧建立重投影误差
+                    std::shared_ptr<GxtProjectionOneFrameTwoCamFactor> gxt_f(
+                        new GxtProjectionOneFrameTwoCamFactor(
+                            pts_i, pts_j_right,
+                            it_per_id.feature_per_frame[0].velocity,
+                            it_per_frame.velocityRight,
+                            it_per_id.feature_per_frame[0].cur_td,
+                            it_per_frame.cur_td));
+                    gxt_f->tic << para_Ex_Pose[0][0], para_Ex_Pose[0][1], para_Ex_Pose[0][2];
+                    gxt_f->qic.x()=para_Ex_Pose[0][3];
+                    gxt_f->qic.y()=para_Ex_Pose[0][4];
+                    gxt_f->qic.z()=para_Ex_Pose[0][5];
+                    gxt_f->qic.w()=para_Ex_Pose[0][6];
+                    gxt_f->tic2 << para_Ex_Pose[1][0] ,para_Ex_Pose[1][1],para_Ex_Pose[1][2];
+                    gxt_f->qic2.x()=para_Ex_Pose[1][3];
+                    gxt_f->qic2.y()=para_Ex_Pose[1][4];
+                    gxt_f->qic2.z()=para_Ex_Pose[1][5];
+                    gxt_f->qic2.w()=para_Ex_Pose[1][6];
+                    gxt_f->td=para_Td[0][0];
+                    // 优化变量：首帧位姿，当前帧位姿，外参（左目），特征点逆深度，相机与IMU时差
+                   // std::vector<std::shared_ptr<Vertex>> edge_vertex;
+                   // edge_vertex.push_back(vertexCams_vec.at(imu_i));
+                   // edge_vertex.push_back(vertexCams_vec.at(imu_j));
+                   // edge_vertex.push_back(vector_inverse_deep.at(feature_index));
+                   gxt_f->AddVertex(vector_inverse_deep.at(feature_index));
+                   gxt_problem.AddEdge(gxt_f);
+                }
+               
+            }
+            f_m_cnt++;
+        }
+    }
+
+    /**
+     * Step2. 调用AddResidualBlock，添加各种残差数据（类似于g2o中的边）
+    */
+    // 边缘化感觉https://zhuanlan.zhihu.com/p/335242594讲的还不错
+    // (1) 添加先验残差，通过Marg的舒尔补操作，将被Marg部分的信息叠加到了保留变量的信息上
+    if (last_marginalization_info && last_marginalization_info->valid)
+    {
+        // construct new marginlization_factor
+        MarginalizationFactor *marginalization_factor = new MarginalizationFactor(last_marginalization_info);
+        problem.AddResidualBlock(marginalization_factor, NULL,
+                                 last_marginalization_parameter_blocks);
+    }
+
+    // NOTE: for gxt_optimization
+    // (1) 添加先验残差，通过Marg的舒尔补操作，将被Marg部分的信息叠加到了保留变量的信息上
+    if (last_marginalization_info && last_marginalization_info->valid)
+    {
+      // 验证一下last_marginalization_parameter_blocks到底都是啥
+    // 应该是11的代优化的顶点！
+      gDebugWarn(last_marginalization_parameter_blocks.size());
+      gDebugWarn(last_marginalization_info->keep_block_size.size());
+      gDebugWarn(last_marginalization_info->keep_block_size);
+      // for(int i=0;i<last_marginalization_parameter_blocks.size();i++) {
+      //   double* vertex_ptr=last_marginalization_parameter_blocks[i];
+      //   bool find=false;
+      //   for(int j=0;j<WINDOW_SIZE+1;j++) {
+      //     if(vertex_ptr==para_Pose[j]){
+      //       gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Pose" << VAR(j);
+      //       find = true;
+      //     }
+      //   }
+      //   for(int j=0;j<WINDOW_SIZE+1;j++) {
+      //     if(vertex_ptr==para_SpeedBias[j]){
+      //       gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_SpeedBias" << VAR(j);
+      //       find = true;
+      //     }
+      //   }
+      //   for(int j=0;j<NUM_OF_F;j++) {
+      //     if(vertex_ptr==para_Feature[j]){
+      //       gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Feature" << VAR(j);
+      //       find = true;
+      //     }
+      //   }
+      //   // for(int j=0;j<2;j++) {
+      //   //   if(vertex_ptr==para_Ex_Pose[j]){
+      //   //     gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Feature" << VAR(j);
+      //   //     find = true;
+      //   //   }
+      //   // }
+      //   for(int j=0;j<1;j++) {
+      //     if(vertex_ptr==para_Td[j]){
+      //       gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Td" << VAR(j);
+      //       find = true;
+      //     }
+      //   }
+      //   // for(int j=0;j<1;j++) {
+      //   //   if(vertex_ptr==para_Tr[j]){
+      //   //     gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Tr" << VAR(j);
+      //   //     find = true;
+      //   //   }
+      //   // }
+      //   if(find==false) {
+      //     gDebugError() << "not find!" << vertex_ptr;
+      //     // gDebugWarn() << "not find!" << vertex_ptr;
+      //   }
+      // }
+        // // 先添加先验的顶点吧
+        // std::shared_ptr<VertexMarginalization> gxt_vertex_marginalization(new VertexMarginalization(10));
+        // construct new marginlization_factor
+        std::shared_ptr<GxtMarginalizationFactor> gxt_marginalization_factor(new GxtMarginalizationFactor(last_marginalization_info));
+
+      for(int i=0;i<last_marginalization_parameter_blocks.size();i++) {
+        double* vertex_ptr=last_marginalization_parameter_blocks[i];
+        bool find=false;
+        for(int j=0;j<WINDOW_SIZE+1;j++) {
+          if(vertex_ptr==para_Pose[j]){
+            gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Pose" << VAR(j);
+            find = true;
+            gxt_marginalization_factor->AddVertex(vertexCams_vec.at(j));
+          }
+        }
+        for(int j=0;j<WINDOW_SIZE+1;j++) {
+          if(vertex_ptr==para_SpeedBias[j]){
+            gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_SpeedBias" << VAR(j);
+            find = true;
+            gxt_marginalization_factor->AddVertex(vector_vertex_motion.at(j));
+          }
+        }
+        for(int j=0;j<NUM_OF_F;j++) {
+          if(vertex_ptr==para_Feature[j]){
+            gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Feature" << VAR(j);
+            find = true;
+            bool index_find=false;
+            for(int x=0;x<vector_inverse_deep_index.size();x++) {
+              if(j==vector_inverse_deep_index.at(x)) {
+                gxt_marginalization_factor->AddVertex(vector_inverse_deep.at(x));
+                index_find=true;
+              }
+            }
+            if(index_find==false) {gDebugError("index unexpect error");}
+          }
+        }
+        for(int j=0;j<2;j++) {
+          if(vertex_ptr==para_Ex_Pose[j]){
+            gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Ex_Pose" << VAR(j);
+            find = true;
+            gxt_marginalization_factor->AddVertex(vector_para_ex_pose.at(j));
+          }
+        }
+        for(int j=0;j<1;j++) {
+          if(vertex_ptr==para_Td[j]){
+            gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Td" << VAR(j);
+            find = true;
+            gxt_marginalization_factor->AddVertex(vertex_td);
+          }
+        }
+        // for(int j=0;j<1;j++) {
+        //   if(vertex_ptr==para_Tr[j]){
+        //     gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Tr" << VAR(j);
+        //     find = true;
+        //   }
+        // }
+        if(find==false) {
+          gDebugError() << "not find!" << vertex_ptr;
+          // gDebugWarn() << "not find!" << vertex_ptr;
+        }
+      }
+
+      gxt_problem.AddEdge(gxt_marginalization_factor);
+      // gDebug("debug point 1");
+      // gxt_marginalization_factor->ComputeResidual();
+      // gxt_marginalization_factor->ComputeJacobians();
+      // gDebug("debug point 2");
+    }
+
+    ROS_DEBUG("visual measurement count: %d", f_m_cnt);
+    //printf("prepare for ceres: %f \n", t_prepare.toc());
+
+    /**
+     * Step3. 设置优化器参数，执行优化
+    */
+
+    ceres::Solver::Options options;
+    options.linear_solver_type = ceres::DENSE_SCHUR;
+    //options.num_threads = 2;
+    // WARN: 作为对比，ceres我们先用LEVENBERG_MARQUARDT
+    // options.trust_region_strategy_type = ceres::DOGLEG;
+    options.trust_region_strategy_type = ceres::LEVENBERG_MARQUARDT;
+    options.max_num_iterations = NUM_ITERATIONS;
+    //options.use_explicit_schur_complement = true;
+    //options.minimizer_progress_to_stdout = true;
+    //options.use_nonmonotonic_steps = true;
+    if (marginalization_flag == MARGIN_OLD)
+        options.max_solver_time_in_seconds = SOLVER_TIME * 4.0 / 5.0;
+    else
+        options.max_solver_time_in_seconds = SOLVER_TIME;
+    TicToc t_solver;
+    ceres::Solver::Summary summary;
+
+
+
+  #if 1
+  // NOTE: for gxt_optimization
+  TIME_CODE(gxt_problem.Solve(10));
+  
+  #if 1
+  // NOTE: for gxt_optimization
+  // 第一帧优化前位姿
+  Vector3d origin_R0 = Utility::R2ypr(Rs[0]);
+  Vector3d origin_P0 = Ps[0];
+  if(USE_IMU)
+  {
+      Vec7 pose_0=vertexCams_vec.at(0)->Parameters();
+
+      // 本次优化后第一帧位姿
+      Vector3d origin_R00 = Utility::R2ypr(Quaterniond(pose_0(6),
+                                                        pose_0(3),
+                                                        pose_0(4),
+                                                        pose_0(5)).toRotationMatrix());
+      // yaw角差量
+      double y_diff = origin_R0.x() - origin_R00.x();
+      // yaw角差量对应旋转矩阵
+      Matrix3d rot_diff = Utility::ypr2R(Vector3d(y_diff, 0, 0));
+
+      // pitch角接近90°，todo
+      if (abs(abs(origin_R0.y()) - 90) < 1.0 || abs(abs(origin_R00.y()) - 90) < 1.0)
+      {
+          ROS_DEBUG("euler singular point!");
+          // 计算旋转位姿变换
+          rot_diff = Rs[0] * Quaterniond(pose_0(6),
+                                         pose_0(3),
+                                         pose_0(4),
+                                         pose_0(5)).toRotationMatrix().transpose();
+      }
+
+      // 遍历滑窗，位姿、速度全部施加优化前后第一帧的位姿变换（只有旋转） todo
+      for (int i = 0; i <= WINDOW_SIZE; i++)
+      {
+          Vec7 pose=vertexCams_vec.at(i)->Parameters();
+
+          Rs[i] = rot_diff * Quaterniond(pose(6), pose(3), pose(4), pose(5)).normalized().toRotationMatrix();
+          
+          Ps[i] = rot_diff * Vector3d(pose(0) - pose_0(0),
+                                  pose(1) - pose_0(1),
+                                  pose(2) - pose_0(2)) + origin_P0;
+
+          Vec9 para_speedbias=vector_vertex_motion.at(i)->Parameters();
+
+          // Vs[i] = rot_diff * Vector3d(para_speedbias(0),para_speedbias(1),para_speedbias(2));
+
+          // Bas[i] = Vector3d(para_speedbias(3),para_speedbias(4),para_speedbias(5));
+
+          // Bgs[i] = Vector3d(para_speedbias(6),para_speedbias(7),para_speedbias(8));
+          
+      }
+      for (int i=0;i<=frame_count;i++) {
+          Vec9 para_speedbias=vector_vertex_motion.at(i)->Parameters();
+          Vs[i] = rot_diff * Vector3d(para_speedbias(0),para_speedbias(1),para_speedbias(2));
+
+          Bas[i] = Vector3d(para_speedbias(3),para_speedbias(4),para_speedbias(5));
+
+          Bgs[i] = Vector3d(para_speedbias(6),para_speedbias(7),para_speedbias(8));
+      }
+  }
+  // 不使用IMU时，第一帧固定，后面的位姿直接赋值
+  else
+  {
+      for (int i = 0; i <= WINDOW_SIZE; i++)
+      {
+        // Rs[i] = Quaterniond(para_Pose[i][6], para_Pose[i][3], para_Pose[i][4], para_Pose[i][5]).normalized().toRotationMatrix();
+        // Ps[i] = Vector3d(para_Pose[i][0], para_Pose[i][1], para_Pose[i][2]);
+        Vec7 pose=vertexCams_vec.at(i)->Parameters();
+        Rs[i] = Quaterniond(pose(6), pose(3),pose(4),pose(5)).normalized().toRotationMatrix();
+        Ps[i] = Vector3d(pose(0),pose(1),pose(2));
+      }
+  }
+  // 更新逆深度
+  VectorXd dep = f_manager.getDepthVector();
+  for (int i = 0; i < f_manager.getFeatureCount(); i++)
+      dep(i) = vector_inverse_deep.at(i)->Parameters()(0);
+  f_manager.setDepth(dep);
+
+
+  #endif
+
+  #else
+
+    ceres::Solve(options, &problem, &summary);
+    //cout << summary.BriefReport() << endl;
+    ROS_DEBUG("Iterations : %d", static_cast<int>(summary.iterations.size()));
+    //printf("solver costs: %f \n", t_solver.toc());
+    // 更新优化后的参数，包括位姿、速度、偏置、外参、特征点逆深度、相机与IMU时差
+    double2vector();
+    //printf("frame_count: %d \n", frame_count);
+  #endif
+
+
+    // ceres::Solve(options, &problem, &summary);
+    // //cout << summary.BriefReport() << endl;
+    // ROS_DEBUG("Iterations : %d", static_cast<int>(summary.iterations.size()));
+    // //printf("solver costs: %f \n", t_solver.toc());
+    // // 更新优化后的参数，包括位姿、速度、偏置、外参、特征点逆深度、相机与IMU时差
+    // double2vector();
+
+    // NOTE: for gxt_optimization
+  #if 1
+    // debug output opti info
+    gDebugCol4() << G_SPLIT_LINE;
+    gDebugCol4() << G_SPLIT_LINE;
+    gDebugCol2("No Opti:");
+    gDebugCol2(debug_vector_pose_noopti.size());
+    for(int i=0;i<debug_vector_pose_noopti.size();i++) {
+      gDebug(i) << debug_vector_pose_noopti.at(i).transpose();
+    }
+    gDebugCol2("Ceres Opti:");
+    for (int i = 0; i < frame_count + 1; i++) {
+        VecX pose(7);
+        // 平移和四元数
+        pose << para_Pose[i][0], para_Pose[i][1], para_Pose[i][2],
+            para_Pose[i][3], para_Pose[i][4], para_Pose[i][5], para_Pose[i][6];
+
+        debug_vector_pose_opti.push_back(pose);
+    }
+    gDebugCol2(debug_vector_pose_opti.size());
+    for(int i=0;i<debug_vector_pose_opti.size();i++) {
+      gDebug(i) << debug_vector_pose_opti.at(i).transpose();
+    }
+    gDebugCol2("Gxt Opti:");
+    gDebugCol2(vertexCams_vec.size());
+    for(int i=0;i<vertexCams_vec.size();i++) {
+      gDebug(i) << vertexCams_vec.at(i)->Parameters().transpose();
+    }
+    gDebugCol4() << G_SPLIT_LINE;
+    gDebugCol2("No Opti:");
+    gDebugCol2(debug_vector_inverse_deep_noopti.size());
+    for(int i=0;i<debug_vector_inverse_deep_noopti.size();i++) {
+      gDebug(i) << debug_vector_inverse_deep_noopti.at(i);
+    }
+    gDebugCol2("Ceres Opti:");
+    int debug_feature_index=-1;
+    for (auto &it_per_id : f_manager.feature) {
+        it_per_id.used_num = it_per_id.feature_per_frame.size();
+        if (it_per_id.used_num < 4) // only select used_num>=4
+            continue;
+
+        ++debug_feature_index;
+
+        debug_vector_inverse_deep_opti.push_back(para_Feature[debug_feature_index][0]);
+    }
+    gDebugCol2(debug_vector_inverse_deep_opti.size());
+    for(int i=0;i<debug_vector_inverse_deep_opti.size();i++) {
+      gDebug(i) << debug_vector_inverse_deep_opti.at(i);
+    }
+    gDebugCol2("Gxt Opti:");
+    gDebugCol2(vector_inverse_deep.size());
+    for(int i=0;i<vector_inverse_deep.size();i++) {
+      gDebug(i) << vector_inverse_deep.at(i)->Parameters();
+    }
+    gDebugCol4() << G_SPLIT_LINE;
+    gDebugCol4() << G_SPLIT_LINE;
+  #endif
 
     if(frame_count < WINDOW_SIZE)
         return;

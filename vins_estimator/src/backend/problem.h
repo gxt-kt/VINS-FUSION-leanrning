@@ -84,8 +84,6 @@ class Problem {
       return false;
     }
 
-    TIME_BEGIN();
-
     // 统计优化变量的维数，为构建 H 矩阵做准备
     SetOrdering();
     // 遍历edge, 构建 H = J^T * J 矩阵
@@ -98,8 +96,9 @@ class Problem {
     int iter = 0;
 
     while (!stop && iter < iterations) {
-      gDebugCol1() << "iter: " << iter << " , chi= " << currentChi_
-                   << " , Lambda= " << currentLambda_;
+      // gDebugCol1() << "iter: " << iter << " , chi= " << currentChi_
+      //              << " , Lambda= " << currentLambda_;
+      gDebugCol1() << VAR(iter,init_Chi_,currentChi_,currentLambda_);
       bool one_step_success{false};
       int false_cnt = 0;
       while (!one_step_success) {  // 不断尝试 Lambda, 直到成功迭代一步
@@ -113,8 +112,9 @@ class Problem {
         RemoveLambdaHessianLM();
 
         // 优化退出条件1： delta_x_ 很小则退出
-        if (delta_x_.squaredNorm() <= my_type{1e-6} || false_cnt > 10) {
-          gDebug("stop=true");
+        gDebug(delta_x_.squaredNorm());
+        if (delta_x_.squaredNorm() <= my_type{1e-8} || false_cnt > 10) {
+          gDebug("stop=true : delta_x_.squaredNorm() <= 1e-6 || false_cnt > 10");
           stop = true;
           break;
         }
@@ -124,7 +124,7 @@ class Problem {
 
         // 判断当前步是否可行以及 LM 的 lambda 怎么更新
         one_step_success = IsGoodStepInLM();
-        gDebugCol2(one_step_success);
+        gDebugCol2() << VAR(one_step_success,false_cnt);
 
         // 后续处理，
         if (one_step_success) {
@@ -274,6 +274,9 @@ class Problem {
                                       // landmark 的维数，后面会对他们进行排序
       {
         AddOrderingSLAM(vertex.second);
+      } else if(problem_type_ ==
+          ProblemType::GENERIC_PROBLEM) {
+        vertex.second->SetOrderingId(ordering_generic_-vertex.second->LocalDimension());
       }
       if (IsPoseVertex(vertex.second)) {
         std::cout << vertex.second->Id()
@@ -319,9 +322,12 @@ class Problem {
     VecX b(VecX::Zero(size));
 
     // 遍历每个残差，并计算他们的雅克比，得到最后的 H = J^T * J
+    // gDebugWarn("caculate edge begin");
     for (auto& edge : edges_) {
+      // gDebugWarn("caculate residual and jacobians begin");
       edge.second->ComputeResidual();
       edge.second->ComputeJacobians();
+      // gDebugWarn("caculate residual and jacobians end");
 
       std::vector<MatXX> jacobians = edge.second->Jacobians();
       std::vector<std::shared_ptr<Vertex>> verticies = edge.second->Verticies();
@@ -362,6 +368,7 @@ class Problem {
         b.segment(index_i, dim_i).noalias() -= JtW * edge.second->Residual();
       }
     }
+    // gDebugWarn("caculate edge end");
     Hessian_ = H;
     b_ = b;
     // t_hessian_cost_;// gxt:时间貌似不重要在这里
@@ -387,8 +394,10 @@ class Problem {
 
     // 非 SLAM 问题直接求解
     if (problem_type_ == ProblemType::GENERIC_PROBLEM) {
-      delta_x_ = Hessian_.inverse() * b_;
-      gDebug(delta_x_);
+     // delta_x_ = Hessian_.inverse() * b_;
+     // delta_x_ = Hessian_.denseSchur().solve(b_);
+     delta_x_ = Hessian_.ldlt().solve(b_);
+//      gDebug(delta_x_);
     } else {
       // SLAM 问题采用舒尔补的计算方式
 
@@ -522,6 +531,7 @@ class Problem {
     }
 
     // 1. 第一步计算停止迭代条件stopThresholdLM_
+    init_Chi_=currentChi_;
     stopThresholdLM_ = 1e-6 * currentChi_;  // 迭代条件为 误差下降 1e-6 倍
 
     // 取出H矩阵对角线的最大值
@@ -585,11 +595,11 @@ class Problem {
       tempChi += edge.second->Chi2();
     }
 
-    gDebugCol5(tempChi);
-    gDebugCol5(currentChi_);
+    // gDebugCol5(tempChi);
+    // gDebugCol5(currentChi_);
 
     double rho = (currentChi_ - tempChi) / scale;
-    gDebugCol5(rho);
+    // gDebugCol5(rho);
 
     // std::terminate();
 
@@ -654,6 +664,7 @@ class Problem {
   double currentLambda_;
   double currentChi_;
   double stopThresholdLM_;  // LM 迭代退出阈值条件
+  double init_Chi_; // 没优化之前的残差大小
   double ni_;               // 控制 Lambda 缩放大小
 
   ProblemType problem_type_;

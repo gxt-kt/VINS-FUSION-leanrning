@@ -25,6 +25,29 @@ Edge::Edge(int residual_dimension, int num_verticies,
   //            << ", num_verticies="<<num_verticies<<", id_="<<id_<<endl;
 }
 
+void Edge::ReSet(int residual_dimension, int num_verticies,
+           const std::vector<std::string>& verticies_types) {
+  residual_.resize(residual_dimension, 1);
+
+  //   TODO::
+  //  这里可能会存在问题，比如这里resize了3个空,后续调用edge->addVertex.
+  //  使得vertex前面会存在空元素
+  //  verticies_.resize(num_verticies);
+
+  if (!verticies_types.empty()) {
+    verticies_types_ = verticies_types;
+  }
+  jacobians_.resize(num_verticies);
+  // id_ = global_edge_id++;
+
+  MatXX information(residual_dimension, residual_dimension);
+  information.setIdentity();
+  information_ = information;
+
+  //    cout<<"Edge construct residual_dimension="<<residual_dimension
+  //            << ", num_verticies="<<num_verticies<<", id_="<<id_<<endl;
+}
+
 double Edge::Chi2() {
   // TODO::  we should not Multiply information here, because we have computed
   // Jacobian = sqrt_info * Jacobian

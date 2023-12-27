@@ -14,6 +14,10 @@
 Eigen::Matrix2d ProjectionOneFrameTwoCamFactor::sqrt_info;
 double ProjectionOneFrameTwoCamFactor::sum_t;
 
+
+Eigen::Matrix2d GxtProjectionOneFrameTwoCamFactor::sqrt_info;
+double GxtProjectionOneFrameTwoCamFactor::sum_t;
+
 /**
  * 双目，左右目建立重投影误差
  * 优化变量：外参（左目），外参（右目），特征点逆深度，相机与IMU时差

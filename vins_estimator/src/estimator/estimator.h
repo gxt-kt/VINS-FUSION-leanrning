@@ -35,6 +35,7 @@
 #include "../factor/projectionTwoFrameTwoCamFactor.h"
 #include "../factor/projectionOneFrameTwoCamFactor.h"
 #include "../featureTracker/feature_tracker.h"
+#include "../factor/vertex_inverse_deep.h"
 
 
 class Estimator
@@ -63,8 +64,10 @@ class Estimator
     void slideWindowNew();
     void slideWindowOld();
     void optimization();
+    void gxt_optimization();
     void vector2double();
     void double2vector();
+    void gxt_double2vector();
     bool failureDetection();
     bool getIMUInterval(double t0, double t1, vector<pair<double, Eigen::Vector3d>> &accVector, 
                                               vector<pair<double, Eigen::Vector3d>> &gyrVector);

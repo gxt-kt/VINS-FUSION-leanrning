@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(vins)
 
-#set(CMAKE_BUILD_TYPE "Debug")
+# set(CMAKE_BUILD_TYPE "Debug")
 set(CMAKE_BUILD_TYPE "Release")
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -40,6 +40,8 @@ include_directories(
 
 catkin_package()
 
+include_directories(src/backend)
+
 add_library(vins_lib
     src/estimator/parameters.cpp
     src/estimator/estimator.cpp
@@ -59,12 +61,17 @@ add_library(vins_lib
     src/featureTracker/feature_tracker.cpp)
 target_link_libraries(vins_lib ${catkin_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES})
 
+target_include_directories(vins_lib PRIVATE src/backend)
+target_link_libraries(vins_lib ls_solve)
+
 add_subdirectory(src/backend)
 
 add_executable(vins_node src/rosNodeTest.cpp)
 target_link_libraries(vins_node vins_lib) 
 
 target_link_libraries(vins_node ls_solve) 
+include_directories(vins_node)
+# target_include_directories(vins_node PRIVATE src/backend)
 
 add_executable(kitti_odom_test src/KITTIOdomTest.cpp)
 target_link_libraries(kitti_odom_test vins_lib) 

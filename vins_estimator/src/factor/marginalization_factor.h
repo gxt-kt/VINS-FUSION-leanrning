@@ -102,3 +102,202 @@ class MarginalizationFactor : public ceres::CostFunction
 
     MarginalizationInfo* marginalization_info;
 };
+
+#include "problem.h"
+
+class GxtMarginalizationFactor : public Edge {
+   public:
+    GxtMarginalizationFactor(MarginalizationInfo *_marginalization_info)
+        : Edge(20, 20, std::vector<std::string>{"EdgeMarginalization"}),
+          marginalization_info(
+              _marginalization_info) {  // 这里初始化20不重要，反正后面要重写的
+      // int cnt = 0;
+      // int ii = 0;
+      // [变量块尺寸] 保留变量
+      // for (auto it : marginalization_info->keep_block_size) {
+      //   // mutable_parameter_block_sizes()->push_back(it);
+      //   ++ii;
+      //   cnt += it;
+      // }
+      // printf("residual size: %d, %d\n", cnt, n);
+      //  先验残差的维度
+      // set_num_residuals(marginalization_info->n);
+      ReSet(marginalization_info->n,
+            marginalization_info->keep_block_size.size());
+    }
+
+    /// 返回边的类型信息
+    virtual std::string TypeInfo() const override {
+      return "EdgeMarginalization";
+    }
+
+    /// 计算残差
+    virtual void ComputeResidual() override {
+      gDebugWarn("margin ComputeResidual begin");
+      VecX residuals_tmp;
+      residuals_tmp.resize(marginalization_info->n);
+      double *residuals = &residuals_tmp(0);
+
+      // double jacobians[14][40];
+
+      // printf("internal addr,%d, %d\n", (int)parameter_block_sizes().size(),
+      // num_residuals()); for (int i = 0; i <
+      // static_cast<int>(keep_block_size.size()); i++)
+      //{
+      //     //printf("unsigned %x\n", reinterpret_cast<unsigned
+      //     long>(parameters[i]));
+      //     //printf("signed %x\n", reinterpret_cast<long>(parameters[i]));
+      // printf("jacobian %x\n", reinterpret_cast<long>(jacobians));
+      // printf("residual %x\n", reinterpret_cast<long>(residuals));
+      // }
+      //  上一次Marg操作之后保留的变量个数
+      int n = marginalization_info->n;
+      // 上一次Marg删除的变量个数
+      int m = marginalization_info->m;
+      Eigen::VectorXd dx(n);
+      // 遍历 [变量块尺寸] 保留变量
+      for (int i = 0;
+           i < static_cast<int>(marginalization_info->keep_block_size.size());
+           i++) {
+        // 变量块尺寸
+        int size = marginalization_info->keep_block_size[i];
+        // 之前保存的时候没有减去m，这里减去m，从0开始。keep_block_idx是[变量块索引]
+        // 保留变量，注：Marg之前的索引
+        int idx = marginalization_info->keep_block_idx[i] - m;
+        // 变量当前的值
+        // Eigen::VectorXd x =
+        //     Eigen::Map<const Eigen::VectorXd>(parameters[i], size);
+        Eigen::VectorXd x = verticies_.at(i)->Parameters();
+        // 上一次Marg操作之后，变量的值
+        Eigen::VectorXd x0 = Eigen::Map<const Eigen::VectorXd>(
+            marginalization_info->keep_block_data[i], size);
+        // dx = x - x0
+        if (size != 7)
+          dx.segment(idx, size) = x - x0;
+        else {
+          dx.segment<3>(idx + 0) = x.head<3>() - x0.head<3>();
+          dx.segment<3>(idx + 3) =
+              2.0 *
+              Utility::positify(
+                  Eigen::Quaterniond(x0(6), x0(3), x0(4), x0(5)).inverse() *
+                  Eigen::Quaterniond(x(6), x(3), x(4), x(5)))
+                  .vec();
+          if (!((Eigen::Quaterniond(x0(6), x0(3), x0(4), x0(5)).inverse() *
+                 Eigen::Quaterniond(x(6), x(3), x(4), x(5)))
+                    .w() >= 0)) {
+            dx.segment<3>(idx + 3) =
+                2.0 *
+                -Utility::positify(
+                     Eigen::Quaterniond(x0(6), x0(3), x0(4), x0(5)).inverse() *
+                     Eigen::Quaterniond(x(6), x(3), x(4), x(5)))
+                     .vec();
+          }
+        }
+      }
+      // 更新残差，r = r0 + J0*dx
+      Eigen::Map<Eigen::VectorXd> map_tmp(residuals, n);
+      map_tmp = marginalization_info->linearized_residuals +
+                marginalization_info->linearized_jacobians * dx;
+
+      residual_ = map_tmp;
+      gDebugWarn("margin ComputeResidual end");
+    }
+
+    /// 计算雅可比
+    virtual void ComputeJacobians() override {
+      VecX residuals_tmp;
+      residuals_tmp.resize(marginalization_info->n);
+      double *residuals = &residuals_tmp(0);
+
+      double jacobians[14][1000];
+
+      // gDebugWarn("margin ComputeJacobians begin");
+      // printf("internal addr,%d, %d\n", (int)parameter_block_sizes().size(),
+      // num_residuals()); for (int i = 0; i <
+      // static_cast<int>(keep_block_size.size()); i++)
+      //{
+      //     //printf("unsigned %x\n", reinterpret_cast<unsigned
+      //     long>(parameters[i]));
+      //     //printf("signed %x\n", reinterpret_cast<long>(parameters[i]));
+      // printf("jacobian %x\n", reinterpret_cast<long>(jacobians));
+      // printf("residual %x\n", reinterpret_cast<long>(residuals));
+      // }
+      //  上一次Marg操作之后保留的变量个数
+      int n = marginalization_info->n;
+      // 上一次Marg删除的变量个数
+      int m = marginalization_info->m;
+      Eigen::VectorXd dx(n);
+      // 遍历 [变量块尺寸] 保留变量
+      for (int i = 0;
+           i < static_cast<int>(marginalization_info->keep_block_size.size());
+           i++) {
+        // 变量块尺寸
+        int size = marginalization_info->keep_block_size[i];
+        // 之前保存的时候没有减去m，这里减去m，从0开始。keep_block_idx是[变量块索引]
+        // 保留变量，注：Marg之前的索引
+        int idx = marginalization_info->keep_block_idx[i] - m;
+        // 变量当前的值
+        // Eigen::VectorXd x =
+        //     Eigen::Map<const Eigen::VectorXd>(parameters[i], size);
+        Eigen::VectorXd x = verticies_.at(i)->Parameters();
+        // 上一次Marg操作之后，变量的值
+        Eigen::VectorXd x0 = Eigen::Map<const Eigen::VectorXd>(
+            marginalization_info->keep_block_data[i], size);
+        // dx = x - x0
+        if (size != 7)
+          dx.segment(idx, size) = x - x0;
+        else {
+          dx.segment<3>(idx + 0) = x.head<3>() - x0.head<3>();
+          dx.segment<3>(idx + 3) =
+              2.0 *
+              Utility::positify(
+                  Eigen::Quaterniond(x0(6), x0(3), x0(4), x0(5)).inverse() *
+                  Eigen::Quaterniond(x(6), x(3), x(4), x(5)))
+                  .vec();
+          if (!((Eigen::Quaterniond(x0(6), x0(3), x0(4), x0(5)).inverse() *
+                 Eigen::Quaterniond(x(6), x(3), x(4), x(5)))
+                    .w() >= 0)) {
+            dx.segment<3>(idx + 3) =
+                2.0 *
+                -Utility::positify(
+                     Eigen::Quaterniond(x0(6), x0(3), x0(4), x0(5)).inverse() *
+                     Eigen::Quaterniond(x(6), x(3), x(4), x(5)))
+                     .vec();
+          }
+        }
+      }
+      // 更新残差，r = r0 + J0*dx
+      Eigen::Map<Eigen::VectorXd> map_tmp(residuals, n);
+      map_tmp = marginalization_info->linearized_residuals +
+                marginalization_info->linearized_jacobians * dx;
+
+      residual_ = map_tmp;
+
+      if (jacobians) {
+        for (int i = 0;
+             i < static_cast<int>(marginalization_info->keep_block_size.size());
+             i++) {
+          if (jacobians[i]) {
+            int size = marginalization_info->keep_block_size[i],
+                local_size = marginalization_info->localSize(size);
+            int idx = marginalization_info->keep_block_idx[i] - m;
+            Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic,
+                                     Eigen::RowMajor>>
+                jacobian(jacobians[i], n, size);
+          // gDebug(n);
+          // gDebug(size);
+            jacobian.setZero();
+            // J = J0 不变
+            jacobian.leftCols(local_size) =
+                marginalization_info->linearized_jacobians.middleCols(
+                    idx, local_size);
+
+            jacobians_.at(i) = jacobian.leftCols(local_size);
+          }
+        }
+      }
+      // gDebugWarn("margin ComputeJacobians end");
+    }
+
+    MarginalizationInfo *marginalization_info;
+};

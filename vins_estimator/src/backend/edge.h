@@ -16,6 +16,9 @@ class Edge {
                 const std::vector<std::string>& verticies_types =
                     std::vector<std::string>());
 
+  void ReSet(int resdial_dimension, int num_verticies,
+                const std::vector<std::string>& verticies_types =
+                    std::vector<std::string>());
   virtual ~Edge(){};
 
   /// 返回id
@@ -96,8 +99,7 @@ class Edge {
   std::vector<std::string> verticies_types_;  // 各顶点类型信息，用于debug
   std::vector<std::shared_ptr<Vertex>> verticies_;  // 该边对应的顶点
   VecX residual_;                                   // 残差
-  std::vector<MatXX>
-      jacobians_;  // 雅可比，每个雅可比维度是 residual x vertex[i]
+  std::vector<MatXX> jacobians_;  // 雅可比，每个雅可比维度是 residual x vertex[i]
   MatXX information_;
   ;                   // 信息矩阵
   VecX observation_;  // 观测信息
