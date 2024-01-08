@@ -133,7 +133,7 @@ class GxtMarginalizationFactor : public Edge {
 
     /// 计算残差
     virtual void ComputeResidual() override {
-      gDebugWarn("margin ComputeResidual begin");
+      // gDebugWarn("margin ComputeResidual begin");
       VecX residuals_tmp;
       residuals_tmp.resize(marginalization_info->n);
       double *residuals = &residuals_tmp(0);
@@ -200,7 +200,7 @@ class GxtMarginalizationFactor : public Edge {
                 marginalization_info->linearized_jacobians * dx;
 
       residual_ = map_tmp;
-      gDebugWarn("margin ComputeResidual end");
+      // gDebugWarn("margin ComputeResidual end");
     }
 
     /// 计算雅可比

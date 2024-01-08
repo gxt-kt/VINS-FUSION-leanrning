@@ -254,10 +254,10 @@ class Problem {
   /// 设置各顶点的ordering_index
   void SetOrdering() {
     // 每次重新计数
-    ordering_poses_ = 0;
-    ordering_generic_ = 0;
-    ordering_landmarks_ = 0;
-    int debug = 0;
+    ordering_poses_ = 0; // 位姿的个数
+    ordering_generic_ = 0; // 总的待优化变量的个数
+    ordering_landmarks_ = 0; // landmark的个数
+    // int debug = 0;
 
     // Note:: verticies_ 是 map 类型的, 顺序是按照 id 号排序的
     // 统计带估计的所有变量的总维度
@@ -265,9 +265,9 @@ class Problem {
     for (auto vertex : verticies_) {
       ordering_generic_ += vertex.second->LocalDimension();
 
-      if (IsPoseVertex(vertex.second)) {
-        debug += vertex.second->LocalDimension();
-      }
+      // if (IsPoseVertex(vertex.second)) {
+      //   debug += vertex.second->LocalDimension();
+      // }
 
       if (problem_type_ ==
           ProblemType::SLAM_PROBLEM)  // 如果是 slam 问题，还要分别统计 pose 和
@@ -278,38 +278,79 @@ class Problem {
           ProblemType::GENERIC_PROBLEM) {
         vertex.second->SetOrderingId(ordering_generic_-vertex.second->LocalDimension());
       }
-      if (IsPoseVertex(vertex.second)) {
-        std::cout << vertex.second->Id()
-                  << " order: " << vertex.second->OrderingId() << std::endl;
-      }
+      // if (IsPoseVertex(vertex.second)) {
+      //   std::cout << vertex.second->Id()
+      //             << " order: " << vertex.second->OrderingId() << std::endl;
+      // }
     }
     gDebugWarn(ordering_generic_);
 
-    std::cout << "\n ordered_landmark_vertices_ size : "
-              << idx_landmark_vertices_.size() << std::endl;
+    // std::cout << "\n ordered_landmark_vertices_ size : " << idx_landmark_vertices_.size() << std::endl;
     if (problem_type_ == ProblemType::SLAM_PROBLEM) {
-      // 这里要把 landmark 的 ordering 加上 pose 的数量，就保持了 landmark
+      // 这里要把 landmark 的 ordering 加上 其他所有的 的数量，就保持了 landmark
       // 在后,而 pose 在前
-      ulong all_pose_dimension = ordering_poses_;
-      for (auto landmarkVertex : idx_landmark_vertices_) {
-        landmarkVertex.second->SetOrderingId(
-            landmarkVertex.second->OrderingId() + all_pose_dimension);
+      // 这里要对之前进行分类的进行排序，要让landmark的顶点排在最后
+
+      // ulong all_pose_dimension =
+      //     ordering_poses_ + ordering_imus_ + ordering_tds_ + ordering_others_;
+      // for (auto landmarkVertex : idx_landmark_vertices_) {
+      //   landmarkVertex.second->SetOrderingId(
+      //       landmarkVertex.second->OrderingId() + all_pose_dimension);
+      // }
+      ulong dimension_sum = 0;
+      for (auto pose : idx_pose_vertices_) {
+        pose.second->SetOrderingId(dimension_sum);
+        dimension_sum += pose.second->LocalDimension();
       }
+      for (auto imu : idx_imu_vertices_) {
+        imu.second->SetOrderingId(dimension_sum);
+        dimension_sum += imu.second->LocalDimension();
+      }
+      for (auto td : idx_td_vertices_) {
+        td.second->SetOrderingId(dimension_sum);
+        dimension_sum += td.second->LocalDimension();
+      }
+      for (auto other : idx_other_vertices_) {
+        other.second->SetOrderingId(dimension_sum);
+        dimension_sum += other.second->LocalDimension();
+      }
+      for (auto landmark : idx_landmark_vertices_) {
+        landmark.second->SetOrderingId(dimension_sum);
+        dimension_sum += landmark.second->LocalDimension();
+      }
+
+      std::cout << "\n pose size : " << idx_pose_vertices_.size() << std::endl;
+      std::cout << "\n imu size : " << idx_imu_vertices_.size() << std::endl;
+      std::cout << "\n td size : " << idx_td_vertices_.size() << std::endl;
+      std::cout << "\n other size : " << idx_other_vertices_.size() << std::endl;
+      std::cout << "\n landmark size : " << idx_landmark_vertices_.size() << std::endl;
     }
   }
 
+  // 这个函数就是把顶点先各自分组，统计每个分组都有啥
   /// set ordering for new vertex in slam problem
   void AddOrderingSLAM(std::shared_ptr<Vertex> v) {
     if (IsPoseVertex(v)) {
       v->SetOrderingId(ordering_poses_);
-      idx_pose_vertices_.insert(
-          std::pair<ulong, std::shared_ptr<Vertex>>(v->Id(), v));
+      idx_pose_vertices_.insert( std::pair<ulong, std::shared_ptr<Vertex>>(v->Id(), v));
       ordering_poses_ += v->LocalDimension();
     } else if (IsLandmarkVertex(v)) {
       v->SetOrderingId(ordering_landmarks_);
+      idx_landmark_vertices_.insert( std::pair<ulong, std::shared_ptr<Vertex>>(v->Id(), v));
       ordering_landmarks_ += v->LocalDimension();
-      idx_landmark_vertices_.insert(
-          std::pair<ulong, std::shared_ptr<Vertex>>(v->Id(), v));
+    } else if (IsImuVertex(v)) {
+      v->SetOrderingId(ordering_imus_);
+      idx_imu_vertices_.insert( std::pair<ulong, std::shared_ptr<Vertex>>(v->Id(), v));
+      ordering_imus_ += v->LocalDimension();
+    } else if (IsTdVertex(v)) {
+      v->SetOrderingId(ordering_tds_);
+      idx_td_vertices_.insert( std::pair<ulong, std::shared_ptr<Vertex>>(v->Id(), v));
+      ordering_tds_ += v->LocalDimension();
+    } else {
+      v->SetOrderingId(ordering_others_);
+      idx_other_vertices_.insert( std::pair<ulong, std::shared_ptr<Vertex>>(v->Id(), v));
+      ordering_others_ += v->LocalDimension();
+      gDebugError("不应该有other顶点 在这个问题里");
     }
   }
 
@@ -398,22 +439,17 @@ class Problem {
      // delta_x_ = Hessian_.denseSchur().solve(b_);
      delta_x_ = Hessian_.ldlt().solve(b_);
 //      gDebug(delta_x_);
-    } else {
+    } else if (problem_type_ == ProblemType::SLAM_PROBLEM) {
+     // delta_x_ = Hessian_.ldlt().solve(b_);
+      // return;
       // SLAM 问题采用舒尔补的计算方式
 
       // step1: schur marginalization --> Hpp, bpp
-      int reserve_size = ordering_poses_;
+      // int reserve_size = ordering_poses_;
+      int reserve_size = ordering_generic_-ordering_landmarks_;
       int marg_size = ordering_landmarks_;
 
-      // TODO:: home work. 完成矩阵块取值，Hmm，Hpm，Hmp，bpp，bmm
-      // MatXX Hmm = Hessian_.block(?,?, ?, ?);
-      // MatXX Hpm = Hessian_.block(?,?, ?, ?);
-      // MatXX Hmp = Hessian_.block(?,?, ?, ?);
-      // VecX bpp = b_.segment(?,?);
-      // VecX bmm = b_.segment(?,?);
-      // NOTE: gxt 完成TODO
-      MatXX Hmm =
-          Hessian_.block(reserve_size, reserve_size, marg_size, marg_size);
+      MatXX Hmm = Hessian_.block(reserve_size, reserve_size, marg_size, marg_size);
       MatXX Hpm = Hessian_.block(0, reserve_size, reserve_size, marg_size);
       MatXX Hmp = Hessian_.block(reserve_size, 0, marg_size, reserve_size);
       VecX bpp = b_.segment(0, reserve_size);
@@ -429,32 +465,28 @@ class Problem {
             Hmm.block(idx, idx, size, size).inverse();
       }
 
-      // TODO:: home work. 完成舒尔补 Hpp, bpp 代码
       MatXX tempH = Hpm * Hmm_inv;
-      // H_pp_schur_ = Hessian_.block(?,?,?,?) - tempH * Hmp;
-      // b_pp_schur_ = bpp - ? * ?;
-      // NOTE: gxt 完成TODO
       H_pp_schur_ =
           Hessian_.block(0, 0, reserve_size, reserve_size) - tempH * Hmp;
       b_pp_schur_ = bpp - tempH * bmm;
 
       // step2: solve Hpp * delta_x = bpp
       VecX delta_x_pp(VecX::Zero(reserve_size));
-      // PCG Solver
-      for (ulong i = 0; i < ordering_poses_; ++i) {
-        H_pp_schur_(i, i) += my_type{currentLambda_};
-      }
 
-      int n = H_pp_schur_.rows() * 2;  // 迭代次数
-      delta_x_pp = PCGSolver(H_pp_schur_, b_pp_schur_,
-                             n);  // 哈哈，小规模问题，搞 pcg 花里胡哨
+      // PCG Solver
+      // for (ulong i = 0; i < ordering_poses_; ++i) {
+      //   H_pp_schur_(i, i) += my_type{currentLambda_};
+      // }
+
+      // int n = H_pp_schur_.rows() * 2;  // 迭代次数
+      // delta_x_pp = PCGSolver(H_pp_schur_, b_pp_schur_, n);  // 哈哈，小规模问题，搞 pcg 花里胡哨
+      
+      // 不整PCG了就，直接ldlt求解吧
+      delta_x_pp = H_pp_schur_.ldlt().solve(b_pp_schur_);
       delta_x_.head(reserve_size) = delta_x_pp;
       //        std::cout << delta_x_pp.transpose() << std::endl;
 
-      // TODO:: home work. step3: solve landmark
       VecX delta_x_ll(marg_size);
-      // delta_x_ll = ???;
-      // NOTE: gxt 完成TODO
       delta_x_ll = Hmm_inv * (bmm - Hmp * delta_x_pp);
       delta_x_.tail(marg_size) = delta_x_ll;
     }
@@ -499,6 +531,18 @@ class Problem {
     std::string type = v->TypeInfo();
     return type == std::string("VertexPointXYZ") ||
            type == std::string("VertexInverseDepth");
+  }
+
+  /// 判断一个顶点是否为imu顶点
+  bool IsImuVertex(std::shared_ptr<Vertex> v) {
+    std::string type = v->TypeInfo();
+    return type == std::string("VertexImu");
+  }
+
+  /// 判断一个顶点是否为Td顶点
+  bool IsTdVertex(std::shared_ptr<Vertex> v) {
+    std::string type = v->TypeInfo();
+    return type == std::string("VertexTd");
   }
 
   /// 在新增顶点后，需要调整几个hessian的大小
@@ -700,13 +744,17 @@ class Problem {
 
   /// Ordering related
   unsigned long ordering_poses_ = 0;
+  unsigned long ordering_imus_ = 0;
+  unsigned long ordering_tds_ = 0;
+  unsigned long ordering_others_ = 0;
   unsigned long ordering_landmarks_ = 0;
   unsigned long ordering_generic_ = 0;
 
-  std::map<unsigned long, std::shared_ptr<Vertex>>
-      idx_pose_vertices_;  // 以ordering排序的pose顶点
-  std::map<unsigned long, std::shared_ptr<Vertex>>
-      idx_landmark_vertices_;  // 以ordering排序的landmark顶点
+  std::map<unsigned long, std::shared_ptr<Vertex>> idx_pose_vertices_;  // 以ordering排序的pose顶点
+  std::map<unsigned long, std::shared_ptr<Vertex>> idx_imu_vertices_;  // 以ordering排序的imu顶点
+  std::map<unsigned long, std::shared_ptr<Vertex>> idx_td_vertices_;  // 以ordering排序的td顶点
+  std::map<unsigned long, std::shared_ptr<Vertex>> idx_other_vertices_;  // 以ordering排序的other顶点
+  std::map<unsigned long, std::shared_ptr<Vertex>> idx_landmark_vertices_;  // 以ordering排序的landmark顶点
 
   HashVertex verticies_marg_;
 

@@ -1810,7 +1810,8 @@ void Estimator::gxt_optimization()
     //ceres::LossFunction* loss_function = new ceres::HuberLoss(1.0);
     
     // NOTE: for gxt_optimization
-    Problem gxt_problem(Problem::ProblemType::GENERIC_PROBLEM);
+    // Problem gxt_problem(Problem::ProblemType::GENERIC_PROBLEM);
+    Problem gxt_problem(Problem::ProblemType::SLAM_PROBLEM);
   
 
     /**
@@ -1911,6 +1912,7 @@ void Estimator::gxt_optimization()
     vertex_td->SetParameters(para_td_vec);
     if (!ESTIMATE_TD || Vs[0].norm() < 0.2)
         vertex_td->SetFixed();
+    gxt_problem.AddVertex(vertex_td);
 
     // 添加相机与IMU时差
     problem.AddParameterBlock(para_Td[0], 1);
@@ -2310,7 +2312,7 @@ void Estimator::gxt_optimization()
 
   #if 1
   // NOTE: for gxt_optimization
-  TIME_CODE(gxt_problem.Solve(10));
+  TIME_CODE(gxt_problem.Solve(8));
   
   #if 1
   // NOTE: for gxt_optimization
@@ -2412,7 +2414,7 @@ void Estimator::gxt_optimization()
     // double2vector();
 
     // NOTE: for gxt_optimization
-  #if 1
+  #if 0
     // debug output opti info
     gDebugCol4() << G_SPLIT_LINE;
     gDebugCol4() << G_SPLIT_LINE;

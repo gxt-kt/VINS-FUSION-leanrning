@@ -628,7 +628,7 @@ public:
     VertexMotion() : Vertex(9) {}
 
     std::string TypeInfo() const {
-        return "VertexMotion";
+        return "VertexImu";
     }
 
 };
