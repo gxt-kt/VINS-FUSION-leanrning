@@ -28,6 +28,10 @@ find_package(OpenCV REQUIRED)
 
 find_package(Ceres REQUIRED)
 
+
+# gxt: use yaml to config value
+find_package(yaml-cpp REQUIRED)  
+
 include_directories(${catkin_INCLUDE_DIRS} ${CERES_INCLUDE_DIRS})
 
 set(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
@@ -69,7 +73,7 @@ add_subdirectory(src/backend)
 add_executable(vins_node src/rosNodeTest.cpp)
 target_link_libraries(vins_node vins_lib) 
 
-target_link_libraries(vins_node ls_solve) 
+target_link_libraries(vins_node ls_solve  yaml-cpp) 
 include_directories(vins_node)
 # target_include_directories(vins_node PRIVATE src/backend)
 

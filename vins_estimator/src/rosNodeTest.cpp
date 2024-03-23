@@ -22,6 +22,7 @@
 #include "utility/visualization.h"
 
 #include "common.hpp"
+#include "config.hpp"
 
 Estimator estimator;
 
@@ -254,6 +255,7 @@ void cam_switch_callback(const std_msgs::BoolConstPtr &switch_msg)
 int main(int argc, char **argv)
 {
     setlocale(LC_ALL,"");
+    GxtReadConfigXmlFile();
 
     gDebugCol3() << "begin rosNodeTest";
     gDebugCol3() << "sleep10s ... ";

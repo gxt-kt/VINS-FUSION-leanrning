@@ -8,6 +8,9 @@
 #include "edge.h"
 #include "vertex.h"
 
+// add fpm
+#include "fpm.h"
+
 class Problem {
  public:
   /**
@@ -84,10 +87,85 @@ class Problem {
       return false;
     }
 
+    // // fpm:
+    // // 设置好最大值和整数位宽
+    if (problem_type_ == ProblemType::SLAM_PROBLEM) {
+      int inverse_depth_i = 0;
+      int imu_i = 0;
+      int pose_i = 0;
+      for (const auto& verticie : verticies_) {
+        if (verticie.second->TypeInfo() == "VertexInverseDepth") {
+          ++inverse_depth_i;
+          inverse_depth_max = std::max(VectorGetAbsMax(verticie.second->Parameters()), inverse_depth_max);
+        }
+        if (verticie.second->TypeInfo() == "VertexImu") {
+          ++imu_i;
+          imu_speed_max = std::max(VectorGetAbsMax(verticie.second->Parameters(), 0, 3), imu_speed_max);
+          imu_accbias_max = std::max(VectorGetAbsMax(verticie.second->Parameters(), 3, 6), imu_accbias_max);
+          imu_gyrobias_max = std::max(VectorGetAbsMax(verticie.second->Parameters(), 6, 9), imu_gyrobias_max);
+        }
+        if (verticie.second->TypeInfo() == "VertexPose") {
+          ++pose_i;
+          pose_transition_max = std::max(VectorGetAbsMax(verticie.second->Parameters(), 0, 3), pose_transition_max);
+          pose_quaternion_max = std::max(VectorGetAbsMax(verticie.second->Parameters(), 3, 7), pose_quaternion_max);
+        }
+      }
+
+      int quantize_inverse_depth_il_test = std::max((int)std::ceil(std::log2(inverse_depth_max)),0);
+
+      int quantize_pose_quaternion_il_test = std::max((int)std::ceil(std::log2(pose_quaternion_max)),0);
+      int quantize_pose_transition_il_test = std::max((int)std::ceil(std::log2(pose_transition_max)),0);
+
+      int quantize_imu_speed_il_test = std::max((int)std::ceil(std::log2(imu_speed_max)),0);
+      int quantize_imu_accbias_il_test = std::max((int)std::ceil(std::log2(imu_accbias_max)),0);
+      int quantize_imu_gyrobias_il_test = std::max((int)std::ceil(std::log2(imu_gyrobias_max)),0);
+
+      gDebugWarn() << VAR(pose_i, imu_i, inverse_depth_i);
+
+      gDebugWarn() << VAR(inverse_depth_max, quantize_inverse_depth_il_test);
+      gDebugWarn() << VAR(imu_speed_max, quantize_imu_speed_il_test);
+      gDebugWarn() << VAR(imu_accbias_max, quantize_imu_accbias_il_test);
+      gDebugWarn() << VAR(imu_gyrobias_max, quantize_imu_gyrobias_il_test);
+      gDebugWarn() << VAR(pose_quaternion_max, quantize_pose_quaternion_il_test);
+      gDebugWarn() << VAR(pose_transition_max, quantize_pose_transition_il_test);
+
+    }
+
+    // 实际开始量化
+    if (problem_type_ == ProblemType::SLAM_PROBLEM) {
+      for (const auto& verticie : verticies_) {
+        if (verticie.second->TypeInfo() == "VertexPose") {
+          // gDebugWarn() << G_PRINT_CNT(1) << "Before cut" << verticie.second->Parameters();
+          QuantizeParamCutOff(verticie.second->Parameters(),quantize_pose_transition_bit_width,quantize_pose_transition_bit_width-quantize_pose_transition_il,0,3);
+          QuantizeParamCutOff(verticie.second->Parameters(),quantize_pose_quaternion_bit_width,quantize_pose_quaternion_bit_width-quantize_pose_quaternion_il,3,7);
+          // gDebugWarn() << G_PRINT_CNT(1) << "After cut"<< verticie.second->Parameters();
+        }
+        if (verticie.second->TypeInfo() == "VertexImu") {
+          QuantizeParamCutOff(verticie.second->Parameters(),quantize_imu_speed_bit_width,quantize_imu_speed_bit_width-quantize_imu_speed_il,0,3);
+          QuantizeParamCutOff(verticie.second->Parameters(),quantize_imu_accbias_bit_width,quantize_imu_accbias_bit_width-quantize_imu_accbias_il,3,6);
+          QuantizeParamCutOff(verticie.second->Parameters(),quantize_imu_gyrobias_bit_width,quantize_imu_gyrobias_bit_width-quantize_imu_gyrobias_il,6,9);
+        }
+        if (verticie.second->TypeInfo() == "VertexInverseDepth") {
+          QuantizeParamCutOff(verticie.second->Parameters(),quantize_inverse_depth_bit_width,quantize_inverse_depth_bit_width-quantize_inverse_depth_il);
+        }
+      }
+    }
+
     // 统计优化变量的维数，为构建 H 矩阵做准备
     SetOrdering();
     // 遍历edge, 构建 H = J^T * J 矩阵
     MakeHessian();
+
+    if (problem_type_ == ProblemType::SLAM_PROBLEM) {
+      hessian_max = std::max(MatrixGetAbsMax(Hessian_), hessian_max);
+      b_max = std::max(MatrixGetAbsMax(b_), b_max);
+    }
+    gDebugWarn() << VAR(hessian_max, b_max);
+
+    int hessian_max_il_test = std::max((int)std::ceil(std::log2(hessian_max)), 0);
+    int b_max_il_test = std::max((int)std::ceil(std::log2(b_max)), 0);
+    gDebugWarn() << VAR(hessian_max, hessian_max_il_test);
+    gDebugWarn() << VAR(b_max, b_max_il_test);
 
     // LM 初始化
     ComputeLambdaInitLM();
