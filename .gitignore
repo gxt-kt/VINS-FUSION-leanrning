@@ -1,2 +1,12 @@
-*build*
-.idea
+.cache
+build/
+devel/
+.vscode
+*.bag
+*.zip
+*.tar
+*.tar.gz
+.catkin_workspace
+.DS_store
+dataset-*
+MH_01_easy
