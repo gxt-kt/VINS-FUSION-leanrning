@@ -34,3 +34,27 @@ bool PoseLocalParameterization::ComputeJacobian(const double *x, double *jacobia
 
     return true;
 }
+
+void GxtPoseLocalParameterization::Plus(const VecX &delta) {
+  VecX &parameters = Parameters();
+  // Eigen::Map<const Eigen::Vector3d> _p(&parameters(0));
+  Eigen::Map<const Eigen::Quaterniond> _q(&parameters(0) + 3);
+
+  // Eigen::Map<const Eigen::Vector3d> dp(&delta(0));
+
+  Eigen::Quaterniond dq =
+      Utility::deltaQ(Eigen::Map<const Eigen::Vector3d>(&delta(0) + 3));
+
+  // Eigen::Map<Eigen::Vector3d> p(x_plus_delta);
+  Eigen::Quaterniond q_plus_delta = (_q * dq).normalized();
+
+  // p = _p + dp;
+  // q = (_q * dq).normalized();
+  parameters.head<3>() += delta.head<3>();
+  parameters[3] = q_plus_delta.x();
+  parameters[4] = q_plus_delta.y();
+  parameters[5] = q_plus_delta.z();
+  parameters[6] = q_plus_delta.w();
+
+  // return true;
+}

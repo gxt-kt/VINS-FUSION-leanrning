@@ -23,14 +23,10 @@ find_package(catkin REQUIRED COMPONENTS
     image_transport)
 
 find_package(OpenCV REQUIRED)
-
-# message(WARNING "OpenCV_VERSION: ${OpenCV_VERSION}")
-
 find_package(Ceres REQUIRED)
-
-
 # gxt: use yaml to config value
 find_package(yaml-cpp REQUIRED)  
+find_package(debugstream REQUIRED)
 
 include_directories(${catkin_INCLUDE_DIRS} ${CERES_INCLUDE_DIRS})
 
@@ -44,7 +40,8 @@ include_directories(
 
 catkin_package()
 
-include_directories(src/backend)
+add_subdirectory(backend)
+include_directories(backend)
 
 add_library(vins_lib
     src/estimator/parameters.cpp
@@ -63,23 +60,19 @@ add_library(vins_lib
     src/initial/initial_sfm.cpp
     src/initial/initial_ex_rotation.cpp
     src/featureTracker/feature_tracker.cpp)
-target_link_libraries(vins_lib ${catkin_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES})
-
-target_include_directories(vins_lib PRIVATE src/backend)
-target_link_libraries(vins_lib ls_solve)
-
-add_subdirectory(src/backend)
-
+target_link_libraries(vins_lib ${catkin_LIBRARIES} ${OpenCV_LIBS} ${CERES_LIBRARIES}
+ls_solve  yaml-cpp debugstream
+)
 add_executable(vins_node src/rosNodeTest.cpp)
 target_link_libraries(vins_node vins_lib) 
 
-target_link_libraries(vins_node ls_solve  yaml-cpp) 
-include_directories(vins_node)
+# target_link_libraries(vins_node ) 
+# include_directories(vins_node)
 # target_include_directories(vins_node PRIVATE src/backend)
 
-add_executable(kitti_odom_test src/KITTIOdomTest.cpp)
-target_link_libraries(kitti_odom_test vins_lib) 
+# add_executable(kitti_odom_test src/KITTIOdomTest.cpp)
+# target_link_libraries(kitti_odom_test vins_lib) 
 
-add_executable(kitti_gps_test src/KITTIGPSTest.cpp)
-target_link_libraries(kitti_gps_test vins_lib) 
+# add_executable(kitti_gps_test src/KITTIGPSTest.cpp)
+# target_link_libraries(kitti_gps_test vins_lib) 
 

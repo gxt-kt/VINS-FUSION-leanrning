@@ -10,3 +10,6 @@ devel/
 .DS_store
 dataset-*
 MH_01_easy
+*build*
+.idea
+*.log

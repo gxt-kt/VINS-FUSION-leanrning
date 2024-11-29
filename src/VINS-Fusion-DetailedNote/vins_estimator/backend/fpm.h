@@ -4,12 +4,22 @@
 
 #include <Eigen/Core>
 #include <Eigen/Geometry>
+#include <exception>
 #include <type_traits>
 
-// #include "problem.h"
 
-#include "common.hpp"
-#include "vertex.h"
+#define MY_TOSTRING(a) #a
+#define QUANTIZE_PRINT_MAX(a,...) do { \
+      static double a##_max=0; \
+      auto tmp = VectorGetAbsMax(a __VA_OPT__(,) __VA_ARGS__ ); \
+      if (tmp > a##_max) { \
+        a##_max = tmp; \
+        int a##_max_il = std::max((int)std::ceil(std::log2(a##_max)), 0); \
+        yaml_quantize[MY_TOSTRING(a##_max)]=a##_max; \
+        yaml_quantize[MY_TOSTRING(a##_max_il)]=a##_max_il; \
+        gDebugLog() << VAR(a##_max,a##_max_il); \
+      } \
+}while(0) 
 
 // template <typename Dtype>
 // void SetValue(int bit_width, int fl) {
@@ -112,17 +122,19 @@ typename Derived::Scalar VectorGetAbsMax(
   if (begin != -1 && end == -1) {
     value_type max_ = -1;
     for (int i = begin; i < matrix.size(); i++) {
-      max_ = std::max(std::abs(matrix[i]), max_);
+      max_ = std::max(std::abs(matrix(i, 0)), max_);
     }
     return max_;
   }
   if (begin != -1 && end != -1) {
     value_type max_ = -1;
     for (int i = begin; i < end; i++) {
-      max_ = std::max(std::abs(matrix[i]), max_);
+      max_ = std::max(std::abs(matrix(i, 0)), max_);
     }
     return max_;
   }
+  std::terminate();
+  return 0;
   // handle the case when both begin and end are -1 or other invalid input
   // return a default value or throw an error, depending on the desired behavior
 }
@@ -178,41 +190,3 @@ void QuantizeParamCutOff(Eigen::MatrixBase<Derived>& matrix, int bit_width = 32,
   //   }
   // }
 }
-
-extern double pose_quaternion_max;
-extern int quantize_pose_quaternion_bit_width;
-extern int quantize_pose_quaternion_il;
-
-extern double pose_transition_max;
-extern int quantize_pose_transition_bit_width;
-extern int quantize_pose_transition_il;
-
-extern double imu_speed_max;
-extern int quantize_imu_speed_bit_width;
-extern int quantize_imu_speed_il;
-
-extern double imu_accbias_max;
-extern int quantize_imu_accbias_bit_width;
-extern int quantize_imu_accbias_il;
-
-extern double imu_gyrobias_max;
-extern int quantize_imu_gyrobias_bit_width;
-extern int quantize_imu_gyrobias_il;
-
-extern double inverse_depth_max;
-extern int quantize_inverse_depth_bit_width;
-extern int quantize_inverse_depth_il;
-
-// Hessian
-extern double hessian_max;
-extern int quantize_hessian_bit_width;
-extern int quantize_hessian_il;
-
-// b
-extern double b_max;
-extern int quantize_b_bit_width;
-extern int quantize_b_il;
-
-// flag
-extern bool use_gxt_backend;
-extern bool enable_quantize;

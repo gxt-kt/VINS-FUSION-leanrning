@@ -10,8 +10,8 @@
 #include "estimator.h"
 #include "../utility/visualization.h"
 #include "common.hpp"
-#include "fpm.h"
 #include "lossfunction.h"
+#include "yaml_config.h"
 
 Estimator::Estimator(): f_manager{Rs}
 {
@@ -1693,21 +1693,21 @@ void Estimator::optimization()
         for (int i = 1; i <= WINDOW_SIZE; i++)
         {
             addr_shift[reinterpret_cast<long>(para_Pose[i])] = para_Pose[i - 1];
-            printf("pose %ld,%ld\n",reinterpret_cast<long>(para_Pose[i]),reinterpret_cast<long>(para_Pose[i-1]));
+            // printf("pose %ld,%ld\n",reinterpret_cast<long>(para_Pose[i]),reinterpret_cast<long>(para_Pose[i-1]));
             if(USE_IMU)
             {
                 addr_shift[reinterpret_cast<long>(para_SpeedBias[i])] = para_SpeedBias[i - 1];
-                printf("speedBias %ld,%ld\n",reinterpret_cast<long>(para_SpeedBias[i]),reinterpret_cast<long>(para_SpeedBias[i-1]));
+                // printf("speedBias %ld,%ld\n",reinterpret_cast<long>(para_SpeedBias[i]),reinterpret_cast<long>(para_SpeedBias[i-1]));
             }
         }
         for (int i = 0; i < NUM_OF_CAM; i++)
         {
             addr_shift[reinterpret_cast<long>(para_Ex_Pose[i])] = para_Ex_Pose[i];
-            printf("exPose %ld,%ld\n",reinterpret_cast<long>(para_Ex_Pose[i]),reinterpret_cast<long>(para_Ex_Pose[i]));
+            // printf("exPose %ld,%ld\n",reinterpret_cast<long>(para_Ex_Pose[i]),reinterpret_cast<long>(para_Ex_Pose[i]));
         }
 
         addr_shift[reinterpret_cast<long>(para_Td[0])] = para_Td[0];
-        printf("td %ld,%ld\n",reinterpret_cast<long>(para_Td[0]),reinterpret_cast<long>(para_Td[0]));
+        // printf("td %ld,%ld\n",reinterpret_cast<long>(para_Td[0]),reinterpret_cast<long>(para_Td[0]));
 
         vector<double *> parameter_blocks = marginalization_info->getParameterBlocks(addr_shift);
 
@@ -2183,9 +2183,9 @@ void Estimator::gxt_optimization()
     {
       // 验证一下last_marginalization_parameter_blocks到底都是啥
     // 应该是11的代优化的顶点！
-      gDebugWarn(last_marginalization_parameter_blocks.size());
-      gDebugWarn(last_marginalization_info->keep_block_size.size());
-      gDebugWarn(last_marginalization_info->keep_block_size);
+      // gDebugWarn(last_marginalization_parameter_blocks.size());
+      // gDebugWarn(last_marginalization_info->keep_block_size.size());
+      // gDebugWarn(last_marginalization_info->keep_block_size);
       // for(int i=0;i<last_marginalization_parameter_blocks.size();i++) {
       //   double* vertex_ptr=last_marginalization_parameter_blocks[i];
       //   bool find=false;
@@ -2235,29 +2235,29 @@ void Estimator::gxt_optimization()
         // construct new marginlization_factor
         std::shared_ptr<GxtMarginalizationFactor> gxt_marginalization_factor(new GxtMarginalizationFactor(last_marginalization_info));
 
-      for(int i=0;i<last_marginalization_parameter_blocks.size();i++) {
+      for(size_t i=0;i<last_marginalization_parameter_blocks.size();i++) {
         double* vertex_ptr=last_marginalization_parameter_blocks[i];
         bool find=false;
         for(int j=0;j<WINDOW_SIZE+1;j++) {
           if(vertex_ptr==para_Pose[j]){
-            gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Pose" << VAR(j);
+            // gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Pose" << VAR(j);
             find = true;
             gxt_marginalization_factor->AddVertex(vertexCams_vec.at(j));
           }
         }
         for(int j=0;j<WINDOW_SIZE+1;j++) {
           if(vertex_ptr==para_SpeedBias[j]){
-            gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_SpeedBias" << VAR(j);
+            // gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_SpeedBias" << VAR(j);
             find = true;
             gxt_marginalization_factor->AddVertex(vector_vertex_motion.at(j));
           }
         }
         for(int j=0;j<NUM_OF_F;j++) {
           if(vertex_ptr==para_Feature[j]){
-            gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Feature" << VAR(j);
+            // gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Feature" << VAR(j);
             find = true;
             bool index_find=false;
-            for(int x=0;x<vector_inverse_deep_index.size();x++) {
+            for(size_t x=0;x<vector_inverse_deep_index.size();x++) {
               if(j==vector_inverse_deep_index.at(x)) {
                 gxt_marginalization_factor->AddVertex(vector_inverse_deep.at(x));
                 index_find=true;
@@ -2268,14 +2268,14 @@ void Estimator::gxt_optimization()
         }
         for(int j=0;j<2;j++) {
           if(vertex_ptr==para_Ex_Pose[j]){
-            gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Ex_Pose" << VAR(j);
+            // gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Ex_Pose" << VAR(j);
             find = true;
             gxt_marginalization_factor->AddVertex(vector_para_ex_pose.at(j));
           }
         }
         for(int j=0;j<1;j++) {
           if(vertex_ptr==para_Td[j]){
-            gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Td" << VAR(j);
+            // gDebugWarn(vertex_ptr) << "find! " << VAR(i) << "para_Td" << VAR(j);
             find = true;
             gxt_marginalization_factor->AddVertex(vertex_td);
           }
@@ -2325,6 +2325,12 @@ void Estimator::gxt_optimization()
 
 
 
+   static bool use_gxt_backend=[]() {
+       bool use_gxt_backend_=yaml_config["flag"]["use_gxt_backend"].as<bool>();
+       gDebugWarn(use_gxt_backend_);
+       return use_gxt_backend_;
+   }();
+
    if(use_gxt_backend) {
   // #if 1
   // NOTE: for gxt_optimization
@@ -2371,7 +2377,7 @@ void Estimator::gxt_optimization()
                                   pose(1) - pose_0(1),
                                   pose(2) - pose_0(2)) + origin_P0;
 
-          Vec9 para_speedbias=vector_vertex_motion.at(i)->Parameters();
+          // Vec9 para_speedbias=vector_vertex_motion.at(i)->Parameters();
 
           // Vs[i] = rot_diff * Vector3d(para_speedbias(0),para_speedbias(1),para_speedbias(2));
 

@@ -9,6 +9,7 @@
  * Author: Qin Tong (qintonguav@gmail.com)
  *******************************************************/
 
+#include <detail/debugwaiting.h>
 #include <stdio.h>
 #include <queue>
 #include <map>
@@ -22,7 +23,6 @@
 #include "utility/visualization.h"
 
 #include "common.hpp"
-#include "config.hpp"
 
 Estimator estimator;
 
@@ -252,15 +252,16 @@ void cam_switch_callback(const std_msgs::BoolConstPtr &switch_msg)
     return;
 }
 
+G_DEBUG_WAIT_PLUGIN(10)
+
 int main(int argc, char **argv)
 {
     setlocale(LC_ALL,"");
-    GxtReadConfigXmlFile();
 
     gDebugCol3() << "begin rosNodeTest";
-    gDebugCol3() << "sleep10s ... ";
+    // gDebugCol3() << "sleep10s ... ";
     // gxt::Sleep(10);
-    gDebugCol3() << "sleep10 done";
+    // gDebugCol3() << "sleep10 done";
 
     ros::init(argc, argv, "vins_estimator");
     ros::NodeHandle n("~");

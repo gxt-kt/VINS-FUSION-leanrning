@@ -40,11 +40,11 @@ sleep 2
   
   
   
-myecho "rosrun vins vins_node ./src/VINS-Fusion-DetailedNote/config/euroc/euroc_mono_imu_config.yaml"  
+myecho "rosrun vins vins_node ./src/VINS-Fusion-DetailedNote/config/euroc/euroc_stereo_config.yaml"  
   
 # rosrun vins vins_node ./src/VINS-Fusion-DetailedNote/config/euroc/euroc_mono_imu_config.yaml &  
 FILE_DIR=$(dirname "$(realpath "$0")")
-rosrun vins vins_node $FILE_DIR/src/VINS-Fusion-DetailedNote/config/euroc/euroc_stereo_config.yaml &  
+rosrun vins vins_node ./src/VINS-Fusion-DetailedNote/config/euroc/euroc_stereo_config.yaml &  
   
 sleep 2
   

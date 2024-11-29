@@ -40,16 +40,16 @@ sleep 2
   
   
   
-myecho "rosrun vins vins_node ./src/VINS-Fusion-DetailedNote/config/euroc/euroc_mono_imu_config.yaml"  
+myecho "rosrun vins vins_node ./src/VINS-Fusion-DetailedNote/config/tum_vi/tum_vi_stereo_imu_config.yaml"
   
 # rosrun vins vins_node ./src/VINS-Fusion-DetailedNote/config/euroc/euroc_mono_imu_config.yaml &  
-rosrun vins vins_node ./src/VINS-Fusion-DetailedNote/config/euroc/euroc_stereo_imu_config.yaml &  
+rosrun vins vins_node ./src/VINS-Fusion-DetailedNote/config/tum_vi/tum_vi_stereo_imu_config.yaml &  
   
-sleep 2
+sleep 5
   
-myecho "rosbag play ./MH_01_easy.bag"  
-rosbag play ./MH_01_easy.bag &>/dev/null
-rosbag_pid=$!  
+myecho "rosbag play ./dataset-room1_512_16.bag"  
+rosbag play ./dataset-room1_512_16.bag &>/dev/null
+rosbag_pid=$!
   
 # 等待所有子进程结束  
 wait $roslaunch_pid $rosbag_pid  

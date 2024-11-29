@@ -8,6 +8,7 @@
  *******************************************************/
 
 #include "visualization.h"
+#include "yaml_config.h"
 
 using namespace ros;
 using namespace Eigen;
@@ -172,14 +173,6 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
         //       << estimator.Vs[WINDOW_SIZE].x() << ","
         //       << estimator.Vs[WINDOW_SIZE].y() << ","
         //       << estimator.Vs[WINDOW_SIZE].z() << "," << endl;
-    
-    
-        // write result to file // for evo tools
-        ofstream foutC(VINS_RESULT_PATH, ios::app);
-        foutC.setf(ios::fixed, ios::floatfield);
-        foutC.precision(0);
-        // foutC << header.stamp.toNSec() << " ";
-        foutC << header.stamp.toSec() << " ";
 
         Eigen::Vector3d translation(4.773746, -1.758123, 0.862048);  
         Eigen::Quaterniond quaternion(0.419303, -0.193000, -0.884701, -0.065125);  
@@ -191,24 +184,53 @@ void pubOdometry(const Estimator &estimator, const std_msgs::Header &header)
         Eigen::Quaterniond pp_quaternion=quaternion.inverse()*p_quaternion;  
       
 
-        foutC.precision(5);
-    #if 1
-        foutC << estimator.Ps[WINDOW_SIZE].x() << " "
-              << estimator.Ps[WINDOW_SIZE].y() << " "
-              << estimator.Ps[WINDOW_SIZE].z() << " "
-              << tmp_Q.w() << " "
-              << tmp_Q.x() << " "
-              << tmp_Q.y() << " "
-              << tmp_Q.z() << std::endl;
-    #else
-        foutC << pp_translation.x() << " "
-              << pp_translation.y() << " "
-              << pp_translation.z() << " "
-              << pp_quaternion.w() << " "
-              << pp_quaternion.x() << " "
-              << pp_quaternion.y() << " "
-              << pp_quaternion.z() << std::endl;
-    #endif
+        // write result to file // for evo tools
+        ofstream foutC(VINS_RESULT_PATH, ios::app);
+        foutC.setf(ios::fixed, ios::floatfield);
+        static std::string use_dataset=yaml_config["use_dataset"].as<std::string>();
+        if(use_dataset=="tum") {
+            foutC.precision(0);
+            foutC << header.stamp.toSec() << " ";
+            foutC.precision(5);
+            foutC << estimator.Ps[WINDOW_SIZE].x() << " "
+                  << estimator.Ps[WINDOW_SIZE].y() << " "
+                  << estimator.Ps[WINDOW_SIZE].z() << " "
+                  << tmp_Q.w() << " "
+                  << tmp_Q.x() << " "
+                  << tmp_Q.y() << " "
+                  << tmp_Q.z() << std::endl;
+        } else if(use_dataset=="euroc") {
+            foutC.precision(0);
+            foutC << header.stamp.toNSec() << " ";
+            foutC.precision(5);
+            foutC << pp_translation.x() << " "
+                  << pp_translation.y() << " "
+                  << pp_translation.z() << " "
+                  << pp_quaternion.w() << " "
+                  << pp_quaternion.x() << " "
+                  << pp_quaternion.y() << " "
+                  << pp_quaternion.z() << std::endl;
+        } else {
+            gDebugError("use_dataset error") << VAR(use_dataset);
+            std::terminate();
+        }
+    // #if 1
+    //     foutC << estimator.Ps[WINDOW_SIZE].x() << " "
+    //           << estimator.Ps[WINDOW_SIZE].y() << " "
+    //           << estimator.Ps[WINDOW_SIZE].z() << " "
+    //           << tmp_Q.w() << " "
+    //           << tmp_Q.x() << " "
+    //           << tmp_Q.y() << " "
+    //           << tmp_Q.z() << std::endl;
+    // #else
+    //     foutC << pp_translation.x() << " "
+    //           << pp_translation.y() << " "
+    //           << pp_translation.z() << " "
+    //           << pp_quaternion.w() << " "
+    //           << pp_quaternion.x() << " "
+    //           << pp_quaternion.y() << " "
+    //           << pp_quaternion.z() << std::endl;
+    // #endif
 
         foutC.close();
         Eigen::Vector3d tmp_T = estimator.Ps[WINDOW_SIZE];
